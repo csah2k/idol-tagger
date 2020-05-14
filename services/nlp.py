@@ -1,141 +1,16 @@
-
-
 from __future__ import unicode_literals, print_function
 import re 
 import csv
-import html
 import plac
 import random
 import logging
-import requests
 import datetime
 from pathlib import Path
 import thinc.extra.datasets
-import concurrent.futures
-import feedparser
 import spacy
 from spacy.util import minibatch, compounding
 
-
-# pip3 install feedparser spacy requests
-# https://github.com/doccano/doccano
-
 TRAIN_DATA = []
-
-# http://localhost:9100/a=admin#page/databases
-dah = 'http://localhost:9100'
-dih = 'http://localhost:9101'
-
-# https://rapidapi.com/Finnhub/api/finnhub-realtime-stock-price?endpoint=apiendpoint_4fae0e14-a8af-4691-a91c-611a40ccf799
-stocks_api = 'https://finnhub.io/api/v1'
-stocks_key = 'bqtk5l7rh5re54um1qug'
-symbols_dbname = 'STOCK_SYMBOLS'
-
-# RSS News Feeds
-feeds_dbname = 'RSS_FEEDS'
-logfile='rss_crawler.log'
-
-re_http_url = re.compile(r'^.*(https?://.+)$', re.IGNORECASE)
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=logging.INFO, handlers=[logging.FileHandler(logfile, 'w', 'utf-8')])
-
-
-def main():
-    logging.info("Starting rss deep crawler...")
-    #train_model_sentiment('en_core_web_sm')
-    #train_model_sentiment('pt_core_news_sm')
-    #train_model_ner('en_core_web_sm')
-    #train_model_ner('pt_core_news_sm')
-    #index_feeds()
-    index_stock_symbols('BR')
-
-
-def index_stock_symbols(exchange='US'):
-    docsToIndex = []
-    date = datetime.datetime.now().isoformat()
-    url = f'{stocks_api}/stock/symbol'
-    query = {"exchange":exchange}
-    headers = { 'X-RapidAPI-Key': stocks_key }
-    response = requests.request("GET", url, headers=headers, params=query)
-    try:
-        response = response.json()
-        for _s in response:
-            docsToIndex.append({
-                'reference': _s.get('symbol'),
-                'dbname': symbols_dbname,
-                'content': _s.get('description', _s.get('displaySymbol', _s.get('symbol'))),
-                'fields': {
-                    'DATE': date,
-                    'TITLE': f"{_s.get('description', '')} ({_s.get('symbol')})",
-                    'DISPLAYSYMBOL':  _s.get('displaySymbol'),
-                    'SYMBOL':  _s.get('symbol'),
-                    'DESCR':  _s.get('description')
-                }  
-            })
-    except Exception as error:
-        logging.error(f"{response.status} - {response.text} - {str(error)}")
-    
-    response = { 'url': url, 'count': len(docsToIndex), 'response': (index_into_idol(docsToIndex) if len(docsToIndex) > 0 else 'n/a') }
-    logging.info(response)
-    return response
-
-
-def index_feeds():
-    feeds_file = open('data/feeds.rss', 'r') 
-    Lines = feeds_file.readlines() 
-
-    feeds_threads = []
-    for _l in Lines: 
-        url = _l.strip()
-        if re_http_url.match(url):
-            feeds_threads.append(executor.submit(index_feed, url))
-    feeds_file.close()
-
-    responses = []
-    for _t in feeds_threads:
-        _r = _t.result()
-        responses.append(_r)
-        
-    logging.info("Finished!")
-            
-
-def index_feed(feed_url):      
-    logging.info(f"INDEXING: {feed_url}")
-    docsToIndex = []
-    feed = feedparser.parse(feed_url)
-    for _e in feed.entries:
-        link = _e.get('link', _e.get('href', _e.get('url', _e.get('links', [{'href':feed_url}])[0].get('href', feed_url) )))
-        date = _e.get('published', _e.get('timestamp', _e.get('date')))
-        title = html.unescape(_e.get('title', _e.get('titulo', _e.get('headline',''))))
-        summr = html.unescape(_e.get('summary', _e.get('description', _e.get('text',''))))
-        if re_http_url.match(link):
-            link = re_http_url.search(link).group(1)
-        docsToIndex.append({
-            'reference': link,
-            'dbname': feeds_dbname,
-            'content': f"{title}\n\n{summr}",
-            'fields': {
-                'DATE': date,
-                'TITLE': title,
-                'SUMMARY': summr,
-            }  
-        })
-    response = { 'url': feed_url, 'count': len(docsToIndex), 'response': (index_into_idol(docsToIndex) if len(docsToIndex) > 0 else 'n/a') }
-    logging.info(response)
-    return response
-
-def index_into_idol(documents):
-    index_data = ''
-    for _d in documents:
-        index_data += '\n'.join([
-        f"#DREREFERENCE {_d.get('reference')}", 
-        f"#DREDBNAME {_d.get('dbname')}"] + 
-        [f"#DREFIELD {_f}=\"{_d.get('fields')[_f]}\"" for _f in _d.get('fields')] +
-        [f"#DRECONTENT",
-        f"{_d.get('content', '')}",
-        "#DREENDDOC\n"])
-    index_data = index_data + "#DREENDDATAREFERENCE"
-    return requests.post(f'{dih}/DREADDDATA?', data=index_data.encode('utf-8'), headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
 
 @plac.annotations(
     model=("Model name. Defaults to blank 'en' model.", "option", "m", str),
@@ -369,7 +244,3 @@ def evaluate(tokenizer, textcat, texts, cats):
     else:
         f_score = 2 * (precision * recall) / (precision + recall)
     return {"textcat_p": precision, "textcat_r": recall, "textcat_f": f_score}
-
-
-if __name__ == "__main__":
-    plac.call(main)
