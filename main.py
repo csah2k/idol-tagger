@@ -8,6 +8,7 @@ import concurrent.futures
 import services.idol as idol
 import services.stock as stock
 import services.rss as rss
+import services.nlp as nlp
 
 # TODO - add twitter source
 # https://python-twitter.readthedocs.io/en/latest/getting_started.html
@@ -22,15 +23,27 @@ def main():
     logging.info("Starting deep crawler...")
 
     idolService = idol.Service(logging, 8)
-    #stockService = stock.Service(logging, 2, idolService)
     
-    rssService = rss.Service(logging, 4, idolService)
-    resp = rssService.index_feeds('data/feeds.rss')
-    logging.info(resp)
-
-
+    # INDEX RSS FEEDS
+    #rssService = rss.Service(logging, 4, idolService)
+    #rssService.index_feeds('data/feeds.rss')
+    
+    # INDEX STOCK SYMBOLS
+    #stockService = stock.Service(logging, 2, idolService)
     #exchangeCodes = stockService.list_exchange_codes()
     #stockService.index_stocks_symbols(exchangeCodes)
+
+    # NLP
+    nlpService = nlp.Service(logging, 4, idolService)
+    nlpService.export_training_sentiment_jsonl('Apple')
+    #logging.info(resp)
+    
+
+
+
+
+
+
 
     #train_model_sentiment('en_core_web_sm')
     #train_model_sentiment('pt_core_news_sm')

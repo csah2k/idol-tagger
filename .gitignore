@@ -1,2 +1,6 @@
 *.log
 *.tmp
+src/doccano_api_client
+src/doccano
+services/__pycache__
+*.pyc

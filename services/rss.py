@@ -47,9 +47,15 @@ class Service:
             date = _e.get('published', _e.get('timestamp', _e.get('date')))
             title = html.unescape(_e.get('title', _e.get('titulo', _e.get('headline',''))))
             summr = html.unescape(_e.get('summary', _e.get('description', _e.get('text',''))))
-            content = f"{title}\n\n{summr}"
+            content = f"{title}\n{summr}"
 
-            idolSuggestions = self.idol.suggest_on_text(self.symbols_dbname, title, 'GREATER{1000.0}:SHAREOUTSTANDING_NUM', 20)
+            idolQuery = {
+                'DatabaseMatch' : self.symbols_dbname,
+                'MinScore' : 20,
+                'Fieldtext' : 'GREATER{1000.0}:SHAREOUTSTANDING_NUM',
+                'Text' : title
+            }
+            idolSuggestions = self.idol.suggest_on_text(idolQuery)
             self.logging.info(f"idolSuggestions: {len(idolSuggestions)} | {title}")
             if len(idolSuggestions) > 0:
                 docsToIndex.append({
