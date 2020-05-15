@@ -1,6 +1,7 @@
 from __future__ import unicode_literals, print_function
 
 import plac
+import json
 import random
 import logging
 import concurrent.futures
@@ -15,27 +16,50 @@ import services.nlp as nlp
 
 
 logfile='main.log'
-
+config = {}
 #executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=logging.INFO, handlers=[logging.FileHandler(logfile, 'w', 'utf-8')])
+with open('config.json') as json_configfile:
+    config = json.load(json_configfile)
+logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=logging.INFO, handlers=[logging.FileHandler(config.get('logfile', logfile), 'w', 'utf-8')])
 
 def main():
-    logging.info("Starting deep crawler...")
+    logging.info("==============> Starting service... ")
+    logging.info(config)
 
-    idolService = idol.Service(logging, 8)
+    # IDOL 
+    idolService = idol.Service(logging, config)
     
     # INDEX RSS FEEDS
-    #rssService = rss.Service(logging, 4, idolService)
-    #rssService.index_feeds('data/feeds.rss')
+    #'''
+    rssService = rss.Service(logging, config, idolService)
+    results = rssService.index_feeds('data/feeds.rss')
+    for _r in results:
+        logging.info(_r)
+    #'''
     
     # INDEX STOCK SYMBOLS
-    #stockService = stock.Service(logging, 2, idolService)
+    '''
+    stockService = stock.Service(logging, config, idolService)
     #exchangeCodes = stockService.list_exchange_codes()
     #stockService.index_stocks_symbols(exchangeCodes)
+    stockService.index_stocks_symbols(['US'])
+    '''
 
     # NLP
-    nlpService = nlp.Service(logging, 4, idolService)
-    nlpService.export_training_sentiment_jsonl('Apple')
+    '''
+    nlpService = nlp.Service(logging, config, idolService)
+    idolQuery = {
+        'DatabaseMatch' : 'RSS_FEEDS',
+        'MinScore' : 30,
+        'MaxResults': 50,
+        'Text' : 'Apple'
+    }
+    nlpService.export_training_json(idolQuery)
+    nlpService.doccano_login('admin', 'password')
+    nlpService.import_training_json('deep-web')
+    '''
+
+
     #logging.info(resp)
     
 

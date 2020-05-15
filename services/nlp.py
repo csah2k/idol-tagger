@@ -1,4 +1,5 @@
 from __future__ import unicode_literals, print_function
+import os
 import re 
 import csv
 import json
@@ -13,65 +14,81 @@ from pathlib import Path
 import thinc.extra.datasets
 import spacy
 from spacy.util import minibatch, compounding
+from doccano_api_client import DoccanoClient
+
 
 TRAIN_DATA = []
 
-
-# https://github.com/doccano/doccano
-# https://github.com/doccano/doccano/issues/299
+dataFolder = 'data'
+trainingDataSnt = 'training_snt.jsonl'
+trainingDataNer= 'training_ner.jsonl'
 
 class Service:
 
     executor = None
     logging = None
+    config = None
     idol = None
+    doccano_client = None
+    #doccano_url = 'http://localhost:8000'
 
-    def __init__(self, logging, threads, idol): 
-        self.logging = logging
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
-        self.idol = idol
+    def __init__(self, logging, config, idol): 
+        self.logging = logging 
+        self.config = config.get('nlp')
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
+        self.idol = idol 
+        self.doccano_login(self.config.get('username'), self.config.get('password'))
 
-    def export_training_sentiment_jsonl(self, text):
-        with codecs.open('data/training_sentiment.jsonl', 'a', 'utf-8') as outfile:
-            idolQuery = {
-                'DatabaseMatch' : 'RSS_FEEDS',
-                'MinScore' : 30,
-                'Text' : text
-            }
-            hits = self.idol.query(idolQuery)
+    def doccano_login(self, username, password):
+        # instantiate a client and log in to a Doccano instance
+        self.doccano_client = DoccanoClient(self.config.get('url'), username, password)
+        # get basic information about the authorized user
+        r_me = self.doccano_client.get_me()
+        self.logging.info(f"logged in: {r_me.json()}")
+        return self.doccano_client
 
+    def import_training_json(self, project_name):
+        if self.doccano_client == None: 
+            self.logging.error(f"Docano not logged in!")
+            return
+
+        project_name = project_name.strip()
+        projects = self.doccano_client.get_project_list()
+        project = [_p for _p in projects.json() if _p.get('name') == project_name]
+        self.logging.debug(f"all projects: {projects.json()}")
+        if len(project) == 0:
+            self.logging.error(f"Project name '{project_name}' not exists!")
+            return
+
+        self.logging.info(f"target project: {project[0]}")
+        project_id = project[0].get('id')
+        project_type = project[0].get('project_type')
+        file_name = (trainingDataNer if project_type == 'SequenceLabeling' else trainingDataSnt)  
+        file_path = os.path.join(dataFolder, trainingDataSnt)
+        if not os.path.exists(file_path):
+            self.logging.error(f"File not exists: {file_path}")
+            return
+
+        resp = self.doccano_client.post_doc_upload(project_id, 'json', file_name, dataFolder)
+        self.logging.info(f"response: {resp}")
+        return resp
+
+    def export_training_json(self, query):
+        target_file = os.path.join(dataFolder, trainingDataSnt)
+        if os.path.exists(target_file): os.remove(target_file)
+        with codecs.open(target_file, 'a', 'utf-8') as outfile:
+            hits = self.idol.query(query)
             #{"text": "Great price.", "labels": ["positive"]}
+            #{"text": "President Obama", "labels": [ [10, 15, "PERSON"] ]}
             for hit in hits:
-                # TODO create labels from fields NEGATIVE_PARAM and POSITIVE_PARAM
+                # TODO create labels from fields NEGATIVE_PARAM and POSITIVE_PARAM  or for entitues 
                 labels = []
                 jsonl = json.dumps({"text": hit.get('title'), "labels": labels}, ensure_ascii=False).encode('utf8')
                 outfile.write(jsonl.decode()+'\n')
                 
-    def export_training_ner_jsonl(self, text):
-        with open('data/training_ner.jsonl', 'w') as outfile:
-            idolQuery = {
-                'DatabaseMatch' : 'RSS_FEEDS',
-                'MinScore' : 30,
-                'Text' : 'Apple'
-            }
-            hits = self.idol.query(idolQuery)
-
-            #{"text": "President Obama", "labels": [ [10, 15, "PERSON"] ]}
-            for hit in hits:
-                json.dump({"text": "Great price.", "labels": ["positive"]}, outfile)
 
             
-            
-            
-            
-
-    
-           
-             
-
-
-
-
+     
 
     @plac.annotations(
         model=("Model name. Defaults to blank 'en' model.", "option", "m", str),

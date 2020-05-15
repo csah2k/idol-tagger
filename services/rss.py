@@ -8,21 +8,21 @@ import concurrent.futures
 
 class Service:
 
-    # RSS News Feeds
-    feeds_dbname = 'RSS_FEEDS'
-    symbols_dbname = 'STOCK_SYMBOLS'
     re_http_url = re.compile(r'^.*(https?://.+)$', re.IGNORECASE)
 
     executor = None
     logging = None
+    config = None
     idol = None
 
-    def __init__(self, logging, threads, idol): 
+    def __init__(self, logging, config, idol): 
         self.logging = logging 
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+        self.config = config.get('rss')
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
         self.idol = idol 
-
-    def index_feeds(self, filename='data/feeds'):
+        
+    def index_feeds(self, filename=None):
+        if filename == None: filename = self.config.get('feeds', 'data/feeds')
         feeds_file = open(filename, 'r') 
         Lines = feeds_file.readlines() 
         feeds_threads = []
@@ -48,25 +48,27 @@ class Service:
             title = html.unescape(_e.get('title', _e.get('titulo', _e.get('headline',''))))
             summr = html.unescape(_e.get('summary', _e.get('description', _e.get('text',''))))
             content = f"{title}\n{summr}"
+            lang_info= self.idol.detect_language(content)
 
-            idolQuery = {
-                'DatabaseMatch' : self.symbols_dbname,
-                'MinScore' : 20,
-                'Fieldtext' : 'GREATER{1000.0}:SHAREOUTSTANDING_NUM',
-                'Text' : title
-            }
-            idolSuggestions = self.idol.suggest_on_text(idolQuery)
-            self.logging.info(f"idolSuggestions: {len(idolSuggestions)} | {title}")
+            idolSuggestions = []
+            for _query in self.config.get('suggest'):
+                idolQuery = _query.copy()
+                idolQuery['Text'] = title
+                idolSuggestions += self.idol.suggest_on_text(idolQuery)
+            idolSuggestions = [_s.get('database') for _s in idolSuggestions]
+            
+            self.logging.info(f"idolSuggest: {idolSuggestions} | {title}")
             if len(idolSuggestions) > 0:
                 docsToIndex.append({
                     'reference': link,
-                    'dbname': self.feeds_dbname,
+                    'dbname': self.config.get('database'),
                     'content': content,
-                    'fields': {
-                        'DATE': date,
-                        'TITLE': title,
-                        'SUMMARY': summr,
-                    }  
+                    'fields': [
+                        ('LANGUAGE', lang_info.get('language')+lang_info.get('encoding')),
+                        ('DATE', date),
+                        ('TITLE', title),
+                        ('SUMMARY', summr),
+                    ] + [('SUGGEST_PARAM', _db) for _db in idolSuggestions]
                 })
         response = { 'url': feed_url, 'count': len(docsToIndex), 'response': (self.idol.index_into_idol(docsToIndex) if len(docsToIndex) > 0 else 'n/a') }
         return response

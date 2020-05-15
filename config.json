@@ -1,0 +1,38 @@
+{
+    "idol": {
+        "threads": 8,
+        "dah": "http://localhost:9100",
+        "dih": "http://localhost:9101"
+    },
+    "stock": {
+        "threads": 2,
+        "database": "STOCK_SYMBOLS",
+        "url": "https://finnhub.io/api/v1",
+        "api": "bqu00jvrh5rb3gqqf9q0",
+        "key": "bqu04u7rh5rb3gqqfb1g"
+    },
+    "rss": {
+        "threads": 16,
+        "database": "RSS_FEEDS",
+        "suggest": [
+            {
+                "databasematch": "STOCK_SYMBOLS",
+                "fieldtext": "GREATER{1000.0}:SHAREOUTSTANDING_NUM",
+                "minscore": 30
+            },
+            {
+                "databasematch": "PERSONS",
+                "minscore": 30
+            }
+        ]
+    },
+    "nlp":{
+        "threads": 2,
+        "doccano":{
+            "url": "http://localhost:8000",
+            "username": "admin",
+            "password": "password"
+        }
+    }
+
+}
