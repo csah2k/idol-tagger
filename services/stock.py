@@ -6,7 +6,7 @@ import requests
 import datetime
 import concurrent.futures
 from retrying import retry
-
+from requests.structures import CaseInsensitiveDict
 class Service:
 
     # https://finnhub.io/docs/api
@@ -17,7 +17,7 @@ class Service:
 
     def __init__(self, logging, config, idol): 
         self.logging = logging
-        self.config = config.get('stock')
+        self.config = config
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
         self.idol = idol 
 
@@ -79,7 +79,7 @@ class Service:
                 try:
                     _p = self.get_symbol_profile(_s.get('symbol'))
                 except Exception as error:
-                    self.logging.info(f"{error}")
+                    self.logging.errors(f"{error}")
 
                 self.logging.info(_p)
 
@@ -92,7 +92,7 @@ class Service:
                 docsToIndex.append({
                     'reference': f"{exchange}_{_s.get('symbol')}",
                     'dbname': self.config.get('database'),
-                    'content': _p.get('name', _s.get('description', _s.get('symbol'))),
+                    'drecontent': _p.get('name', _s.get('description', _s.get('symbol'))),
                     'fields': [
                         ('DATE', date),
                         ('TITLE', f"{_p.get('name', _s.get('description'))} ({_s.get('symbol')})"),

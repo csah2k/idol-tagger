@@ -4,7 +4,7 @@ import html
 import datetime
 import feedparser
 import concurrent.futures
-
+from requests.structures import CaseInsensitiveDict
 
 class Service:
 
@@ -17,7 +17,7 @@ class Service:
 
     def __init__(self, logging, config, idol): 
         self.logging = logging 
-        self.config = config.get('rss')
+        self.config = config
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
         self.idol = idol 
         
@@ -51,7 +51,7 @@ class Service:
             lang_info= self.idol.detect_language(content)
 
             idolSuggestions = []
-            for _query in self.config.get('suggest'):
+            for _query in self.config.get('filters'):
                 idolQuery = _query.copy()
                 idolQuery['Text'] = title
                 idolSuggestions += self.idol.suggest_on_text(idolQuery)
@@ -62,7 +62,7 @@ class Service:
                 docsToIndex.append({
                     'reference': link,
                     'dbname': self.config.get('database'),
-                    'content': content,
+                    'drecontent': content,
                     'fields': [
                         ('LANGUAGE', lang_info.get('language')+lang_info.get('encoding')),
                         ('DATE', date),

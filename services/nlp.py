@@ -15,13 +15,11 @@ import thinc.extra.datasets
 import spacy
 from spacy.util import minibatch, compounding
 from doccano_api_client import DoccanoClient
-
+from requests.structures import CaseInsensitiveDict
+# https://github.com/doccano/doccano
+# https://github.com/afparsons/doccano_api_client
 
 TRAIN_DATA = []
-
-dataFolder = 'data'
-trainingDataSnt = 'training_snt.jsonl'
-trainingDataNer= 'training_ner.jsonl'
 
 class Service:
 
@@ -30,66 +28,125 @@ class Service:
     config = None
     idol = None
     doccano_client = None
-    #doccano_url = 'http://localhost:8000'
 
     def __init__(self, logging, config, idol): 
         self.logging = logging 
         self.config = config.get('nlp')
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
         self.idol = idol 
-        self.doccano_login(self.config.get('username'), self.config.get('password'))
+        login = self.config.get('doccano')
+        self.doccano_login(login.get('url'), login.get('username'), login.get('password'))
 
-    def doccano_login(self, username, password):
-        # instantiate a client and log in to a Doccano instance
-        self.doccano_client = DoccanoClient(self.config.get('url'), username, password)
-        # get basic information about the authorized user
-        r_me = self.doccano_client.get_me()
-        self.logging.info(f"logged in: {r_me.json()}")
+    def doccano_login(self, url, username, password):
+        return self.executor.submit(self.doccano_login_sync, url, username, password).result()
+
+    def doccano_login_sync(self, url, username, password):
+        self.doccano_client = DoccanoClient(url, username, password)
+        r_me = self.doccano_client.get_me().json()
+        self.logging.info(f"Doccano login: {r_me}")
+        if not r_me.get('is_superuser'):
+            self.logging.warn(f"User username is not a super-user!")
         return self.doccano_client
 
-    def import_training_json(self, project_name):
-        if self.doccano_client == None: 
-            self.logging.error(f"Docano not logged in!")
-            return
-
-        project_name = project_name.strip()
-        projects = self.doccano_client.get_project_list()
-        project = [_p for _p in projects.json() if _p.get('name') == project_name]
-        self.logging.debug(f"all projects: {projects.json()}")
-        if len(project) == 0:
+    def populateProject(self, project):
+        project_name = project.get('name').strip()
+        projects_list = self.doccano_client.get_project_list().json()
+        projects = [_p for _p in projects_list if _p.get('name') == project_name]
+        self.logging.debug(f"all projects: {projects}")
+        if len(projects) == 0:
             self.logging.error(f"Project name '{project_name}' not exists!")
-            return
+            return project
 
-        self.logging.info(f"target project: {project[0]}")
-        project_id = project[0].get('id')
-        project_type = project[0].get('project_type')
-        file_name = (trainingDataNer if project_type == 'SequenceLabeling' else trainingDataSnt)  
-        file_path = os.path.join(dataFolder, trainingDataSnt)
+        project['id'] = projects[0].get('id')
+        project['project_type'] = projects[0].get('project_type')
+        self.logging.info(f"Docano project: '{project_name}', id: {project.get('id')}")
+        return project
+
+    def export_idol_to_doccano(self, project):
+        self.export_training_from_idol(project)
+        self.import_training_into_doccano(project)
+
+    def export_training_from_idol(self, project):
+        return self.executor.submit(self.export_training_from_idol_sync, project).result()
+
+    def export_training_from_idol_sync(self, project):
+        tempFile = project.get('tempfile', project.get('name')+'.tmp')
+        dataFolder = self.config.get('tempfolder', 'data')
+        target_file = os.path.join(dataFolder, tempFile)
+        if os.path.exists(target_file): os.remove(target_file)
+        with codecs.open(target_file, 'a', 'utf-8') as outfile:
+            for query in project.get('queries'):
+                # filter tagged or not contents
+                fieldText = query.get('fieldtext','')
+                fieldTextFilter = f"NOT EXISTS{{}}:{project.get('datafield')}"
+                if len(fieldText) > 1: fieldText = f"({fieldText}) AND ({fieldTextFilter})"
+                else: fieldText = fieldTextFilter
+                query['fieldtext'] = fieldText  
+                query['print'] = 'all'
+                docsToMove = []
+                refsToMove = set()
+                hits = self.idol.query(query)
+                for hit in hits:
+                    doc = hit.get('content',{}).get('DOCUMENT',[{}])[0]
+                    text = doc.get(project.get('textfield'), [''])[0]
+                    if len(text.strip()) > 10:
+                        #{"text": "Great price.", "labels": ["positive"]}
+                        #{"text": "President Obama", "labels": [ [10, 15, "PERSON"] ]}
+                        labels = json.loads(doc.get(project.get('datafield'), ['[]'])[0])
+                        hit['fields'] = [(project.get('datafield'), labels)]
+                        jsonl = json.dumps({"text": text, "labels": labels}, ensure_ascii=False).encode('utf8')
+                        outfile.write(jsonl.decode()+'\n')
+                        refsToMove.add(hit.get('reference'))
+                        docsToMove.append(hit)
+
+                # Move the selected docs to a staging database
+                if len(refsToMove) > 0: 
+                    self.idol.remove_documents(refsToMove, 100)
+                    self.idol.index_into_idol(docsToMove, project.get('database'), 80)
+                
+
+    def import_training_into_doccano(self, project):
+        return self.executor.submit(self.import_training_into_doccano_sync, project).result()
+
+    def import_training_into_doccano_sync(self, project):
+        project = self.populateProject(project)
+        tempFile = project.get('tempfile', project.get('name')+'.tmp')
+        dataFolder = self.config.get('tempfolder', 'data')
+        file_path = os.path.join(dataFolder, tempFile)
         if not os.path.exists(file_path):
             self.logging.error(f"File not exists: {file_path}")
             return
 
-        resp = self.doccano_client.post_doc_upload(project_id, 'json', file_name, dataFolder)
-        self.logging.info(f"response: {resp}")
+        resp = self.doccano_client.post_doc_upload(project.get('id'), 'json', tempFile, dataFolder)
+        if 200 <= resp.status_code < 300:
+            self.logging.info(f"File uploaded to Doccano ({resp.status_code}): '{file_path}'")
+            if os.path.exists(file_path): os.remove(file_path)
+        else:
+            self.logging.error(f"Erro uploading file: {tempFile}, code: {resp.status_code}")
         return resp
 
-    def export_training_json(self, query):
-        target_file = os.path.join(dataFolder, trainingDataSnt)
-        if os.path.exists(target_file): os.remove(target_file)
-        with codecs.open(target_file, 'a', 'utf-8') as outfile:
-            hits = self.idol.query(query)
-            #{"text": "Great price.", "labels": ["positive"]}
-            #{"text": "President Obama", "labels": [ [10, 15, "PERSON"] ]}
-            for hit in hits:
-                # TODO create labels from fields NEGATIVE_PARAM and POSITIVE_PARAM  or for entitues 
-                labels = []
-                jsonl = json.dumps({"text": hit.get('title'), "labels": labels}, ensure_ascii=False).encode('utf8')
-                outfile.write(jsonl.decode()+'\n')
+    def export_doccano_to_idol(self, project):
+        return self.executor.submit(self.export_doccano_to_idol_sync, project).result()
+
+    def export_doccano_to_idol_sync(self, project):
+        project = self.populateProject(project)
+        #tempFile = project.get('tempfile', project.get('name')+'.tmp')
+        #dataFolder = self.config.get('tempfolder', 'data')
+        #target_file = os.path.join(dataFolder, tempFile)
+        #if os.path.exists(target_file): os.remove(target_file)
+
+        resp = self.doccano_client.get_doc_download(project.get('id'), 'jsonl')
+        self.logging.info(resp.text)
+        #with codecs.open(target_file, 'a', 'utf-8') as outfile:   
+        #    outfile.write(resp.text)
+        ## TODO parse and index into idol
+
+        return resp
+        
+
+    
                 
-
-            
-     
-
+ 
     @plac.annotations(
         model=("Model name. Defaults to blank 'en' model.", "option", "m", str),
         output_dir=("Optional output directory", "option", "o", Path),

@@ -1,38 +1,105 @@
 {
+    "service":{
+        "logfile": "service.log"
+    },
     "idol": {
         "threads": 8,
-        "dah": "http://localhost:9100",
-        "dih": "http://localhost:9101"
-    },
-    "stock": {
-        "threads": 2,
-        "database": "STOCK_SYMBOLS",
-        "url": "https://finnhub.io/api/v1",
-        "api": "bqu00jvrh5rb3gqqf9q0",
-        "key": "bqu04u7rh5rb3gqqfb1g"
-    },
-    "rss": {
-        "threads": 16,
-        "database": "RSS_FEEDS",
-        "suggest": [
-            {
-                "databasematch": "STOCK_SYMBOLS",
-                "fieldtext": "GREATER{1000.0}:SHAREOUTSTANDING_NUM",
-                "minscore": 30
-            },
-            {
-                "databasematch": "PERSONS",
-                "minscore": 30
-            }
-        ]
+        "dah": {
+            "host": "localhost",
+            "port": 9100
+        },
+        "dih": {
+            "host": "localhost",
+            "port": 9101
+        }
     },
     "nlp":{
+        "enabled": true, 
         "threads": 2,
+        "tempfolder": "data",
         "doccano":{
             "url": "http://localhost:8000",
             "username": "admin",
             "password": "password"
+        },
+        "projects": [
+            {
+                "name": "sentiment",
+                "enabled": true,
+                "startrun": true,
+                "interval": 600,
+                "textfield": "SUMMARY",
+                "datafield": "NLP_SENTIMENT",
+                "database": "TRAINING_SENTIMENT",
+                "queries": [
+                    {
+                        "DatabaseMatch" : "RSS_FEEDS",
+                        "MinScore" : 20,
+                        "MaxResults": 1,
+                        "Text" : "Apple"
+                    },
+                    {
+                        "DatabaseMatch" : "RSS_FEEDS",
+                        "MinScore" : 20,
+                        "MaxResults": 1,
+                        "Text" : "Google"
+                    }
+                ]
+            },
+            {
+                "name": "rss ner",
+                "enabled": false,
+                "interval": 600,
+                "textfield": "DRECONTENT",
+                "datafield": "NLP_ENTITIES",
+                "database": "TRAINING_ENTITIES",
+                "queries": [
+                    {
+                        "DatabaseMatch" : "RSS_FEEDS",
+                        "MinScore" : 30,
+                        "MaxResults": 10,
+                        "Text" : "Apple AND Google"
+                    }
+                ]
+            }
+        ]
+    },
+    "indextasks":[
+        {
+            "name": "Empresas nas bolsas US e BR",
+            "type": "stock",
+            "enabled": false,
+            "startrun": false,
+            "interval": 86400, 
+            "threads": 2,
+            "database": "STOCK_SYMBOLS",
+            "url": "https://finnhub.io/api/v1",
+            "api": "bqu00jvrh5rb3gqqf9q0",
+            "key": "bqu04u7rh5rb3gqqfb1g",
+            "exchanges": ["US", "BR"],
+            "filters": [ ]
+        },
+        {
+            "name": "Feeds de noticias",
+            "type": "rss",
+            "enabled": true,
+            "startrun": false,
+            "interval": 3600,
+            "threads": 16,
+            "database": "RSS_FEEDS",
+            "feeds": "data/feeds.rss",
+            "filters": [
+                {
+                    "databasematch": "STOCK_SYMBOLS",
+                    "fieldtext": "GREATER{1000.0}:SHAREOUTSTANDING_NUM",
+                    "minscore": 25
+                },
+                {
+                    "databasematch": "PERSONS",
+                    "minscore": 30
+                }
+            ]
         }
-    }
+    ]   
 
 }
