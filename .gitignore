@@ -2,8 +2,6 @@
 *.tmp
 src/doccano_api_client
 src/doccano
-services/__pycache__
-services/__pycache__/*
-__pycache__/*
-**/**/*.pyc
-*.pyc
+__pycache__/
+*.py[cod]
+*.so
