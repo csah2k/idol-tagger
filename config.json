@@ -1,10 +1,11 @@
 {
     "service":{
-        "logfile": "service.log",
+        "logfile": "service2.log",
         "loglevel": "INFO"
     },
     "idol": {
-        "threads": 8,
+        "threads": 18,
+        "batchsize": 100,
         "dah": {
             "host": "localhost",
             "port": 9100
@@ -27,7 +28,7 @@
             {
                 "name": "sentiment",
                 "enabled": false,
-                "startrun": true,
+                "startrun": false,
                 "interval": 600,
                 "textfield": "TITLE",
                 "datafield": "NLP_SENTIMENT",
@@ -38,7 +39,7 @@
                         "AnyLanguage": true,
                         "MinScore" : 20,
                         "MaxResults": 3,
-                        "Text" : "Apple:TITLE OR Google:TITLE OR Amazon:TITLE"
+                        "Text" : "bolsonaro"
                     }
                 ]
             },
@@ -65,8 +66,8 @@
         {
             "name": "Empresas nas bolsas US e BR",
             "type": "stock",
-            "enabled": true,
-            "startrun": true,
+            "enabled": false,
+            "startrun": false,
             "interval": 604800,
             "threads": 2,
             "database": "BUSINESS",
@@ -82,19 +83,21 @@
             "enabled": true,
             "startrun": true,
             "interval": 3600,
-            "threads": 16,
+            "threads": 50,
             "database": "RSS_FEEDS",
             "feeds": "data/feeds.rss",
             "filters": [
                 {
-                    "DatabaseMatch": "BUSINESS",
-                    "FieldText": "GREATER{20000.0}:SHAREOUTSTANDING_NUM OR (MATCH{BR}:COUNTRY_PARAM AND GREATER{5000.0}:SHAREOUTSTANDING_NUM)",
+                    "DatabaseMatch": "FILTERS",
+                    "AgentBooleanField": "AGENT_BOOL",
                     "AnyLanguage": true,
                     "MinScore": 20
-                },
+                }
+            ],
+            "filters_SAMPLE": [
                 {
-                    "DatabaseMatch": "PERSONS",
-                    "AgentBooleanField": "AGENT_BOOL",
+                    "DatabaseMatch": "BUSINESS",
+                    "FieldText": "GREATER{20000.0}:SHAREOUTSTANDING_NUM OR (MATCH{BR}:COUNTRY_PARAM AND GREATER{5000.0}:SHAREOUTSTANDING_NUM)",
                     "AnyLanguage": true,
                     "MinScore": 20
                 }

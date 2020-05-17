@@ -16,10 +16,13 @@ import spacy
 from spacy.util import minibatch, compounding
 from doccano_api_client import DoccanoClient
 from requests.structures import CaseInsensitiveDict
+filters_fieldprefix = 'FILTERINDEX'
+
 # https://github.com/doccano/doccano
 # https://github.com/afparsons/doccano_api_client
 
 TRAIN_DATA = []
+
 
 class Service:
 
@@ -94,7 +97,15 @@ class Service:
                         #{"text": "President Obama", "labels": [ [10, 15, "PERSON"] ]}
                         labels = json.loads(doc.get(project.get('datafield'), ['[]'])[0])
                         hit['fields'] = [(project.get('datafield'), labels)]
-                        jsonl = json.dumps({"text": text, "labels": labels}, ensure_ascii=False).encode('utf8')
+                        meta = {
+                            #'title': hit.get('title'),
+                            'link': getDocLink(doc),
+                            'date': getDocDate(doc),
+                            'database': hit.get('database'),
+                            'reference': hit.get('reference')                         
+                        }
+                        meta.update(getDocFilters(doc))
+                        jsonl = json.dumps({'text': text, 'labels': labels, 'meta': meta}, ensure_ascii=False).encode('utf8')
                         outfile.write(jsonl.decode()+'\n')
                         refsToMove.add(hit.get('reference'))
                         docsToMove.append(hit)
@@ -379,3 +390,20 @@ class Service:
         else:
             f_score = 2 * (precision * recall) / (precision + recall)
         return {"textcat_p": precision, "textcat_r": recall, "textcat_f": f_score}
+
+def getDocLink(doc):
+    return doc.get('URL', doc.get('LINK', doc.get('FEED', [''] )))[0]   
+
+def getDocDate(doc):
+    return doc.get('DATE', doc.get('DREDATE', doc.get('TIMESTAMP', [''] )))[0]   
+
+def getDocFilters(doc):
+    references = doc.get(f'{filters_fieldprefix}_REFS', [])
+    dbname = doc.get(f'{filters_fieldprefix}_DBS', [])
+    links = doc.get(f'{filters_fieldprefix}_LNKS', [])
+    prefix = filters_fieldprefix.lower()
+    return {
+        f'{prefix}_databases': ','.join(dbname),
+        f'{prefix}_references': ','.join(references),
+        f'{prefix}_links': ','.join(links)
+    }

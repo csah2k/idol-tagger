@@ -7,9 +7,12 @@ import datetime
 import concurrent.futures
 from retrying import retry
 from requests.structures import CaseInsensitiveDict
+filters_fieldprefix = 'FILTERINDEX'
+
+# https://finnhub.io/docs/api
 class Service:
 
-    # https://finnhub.io/docs/api
+    
     executor = None
     logging = None
     config = None
@@ -117,6 +120,6 @@ class Service:
             self.logging.error(f"{response} - {str(error)}")
             raise error
         
-        response = { 'url': url, 'exchange': exchange, 'count': len(docsToIndex), 'response': (self.idol.index_into_idol(docsToIndex) if len(docsToIndex) > 0 else '') }
+        response = { 'url': url, 'exchange': exchange, 'count': len(docsToIndex), 'response': (self.idol.index_into_idol(docsToIndex, self.config.get('database')) if len(docsToIndex) > 0 else '') }
         self.logging.info(response)
         return response
