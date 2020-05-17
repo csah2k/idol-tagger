@@ -4,12 +4,8 @@ import requests
 import concurrent.futures
 from retrying import retry
 from requests.structures import CaseInsensitiveDict
+
 class Service:
-
-
-    # http://localhost:9100/a=admin#page/databases
-    #dah = 'http://localhost:9100'
-    #dih = 'http://localhost:9101'
 
     executor = None
     logging = None
@@ -91,7 +87,7 @@ class Service:
 
     @retry(wait_exponential_multiplier=1000, wait_exponential_max=10000, stop_max_delay=30000)
     def suggest_on_text_sync(self, query):    
-        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=SuggestOnText&ResponseFormat=simplejson&SingleMatch=True&{urllib.parse.urlencode(clearQuery(query))}", verify=False)    
+        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=SuggestOnText&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(query))}", verify=False)    
         return response.json().get('autnresponse', {}).get('responsedata', {}).get('hit', [])
 
     def query(self, query={}):    
@@ -101,7 +97,7 @@ class Service:
     def query_sync(self, query):    
         response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=Query&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(query))}", verify=False)   
         hits = response.json().get('autnresponse', {}).get('responsedata', {}).get('hit', [])
-        self.logging.info(f"Idol query results: {len(hits)}") 
+        self.logging.debug(f"Idol query results: {len(hits)}") 
         return hits
 
     def detect_language(self, text):    
@@ -114,6 +110,10 @@ class Service:
         language = response_data.get('language', 'GENERAL') if response_data.get('language') != 'UNKNOWN' else 'GENERAL'
         encoding = response_data.get('languageencoding', 'UTF8')
         return { 'language': language , 'encoding': encoding }
+
+
+
+## --------- helper functions ------------
 
 def makeUrl(component):
     return f"{component.get('protocol','http')}://{component.get('host','localhost')}:{component.get('port',9000)}"

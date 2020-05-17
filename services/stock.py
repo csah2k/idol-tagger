@@ -21,7 +21,7 @@ class Service:
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
         self.idol = idol 
 
-    @retry(wait_exponential_multiplier=1000, wait_exponential_max=10000, stop_max_delay=90000)
+    @retry(wait_fixed=10000, stop_max_delay=70000)
     def get_symbol_profile(self, symbol):
         url = f"{self.config.get('url')}/stock/profile2"
         query = {'token':self.config.get('api'), 'symbol':symbol}
@@ -30,7 +30,7 @@ class Service:
         try:
             return response.json()
         except Exception as error:
-            self.logging.error(f"{response} - {response.text} - {str(error)}")
+            self.logging.error(f"{response} - {str(error)}")
             raise error
 
     def list_exchange_codes(self):
@@ -39,7 +39,7 @@ class Service:
     def list_exchange_codes_sync(self):
         return list(set([_e.get('code', None) for _e in self.get_stock_exchanges() if _e.get('code', None) != None]))   
 
-    @retry(wait_exponential_multiplier=1000, wait_exponential_max=10000, stop_max_delay=120000)
+    @retry(wait_fixed=10000, stop_max_delay=90000)
     def get_stock_exchanges(self):
         self.logging.info(f"Listing stock exchanges...")
         url = f"{self.config.get('url')}/stock/exchange"
@@ -49,7 +49,7 @@ class Service:
         try:
             return response.json()
         except Exception as error:
-            self.logging.error(f"{response} - {response.text} - {str(error)}")
+            self.logging.error(f"{response} - {str(error)}")
             raise error
 
     def index_stocks_symbols(self, exchanges=['US']):
@@ -62,7 +62,7 @@ class Service:
             responses.append(_r)   
         return responses
             
-    @retry(wait_exponential_multiplier=1000, wait_exponential_max=10000, stop_max_delay=120000)
+    @retry(wait_fixed=10000, stop_max_delay=90000)
     def index_stock_symbols(self, exchange):
         exchange = exchange.strip().upper()
         self.logging.info(f"Indexing {exchange} stock symbols...")
@@ -79,7 +79,7 @@ class Service:
                 try:
                     _p = self.get_symbol_profile(_s.get('symbol'))
                 except Exception as error:
-                    self.logging.errors(f"{error}")
+                    self.logging.error(f"{error}")
 
                 self.logging.info(_p)
 
@@ -94,6 +94,7 @@ class Service:
                     'dbname': self.config.get('database'),
                     'drecontent': _p.get('name', _s.get('description', _s.get('symbol'))),
                     'fields': [
+                        ('LANGUAGE', 'GENERALUTF8'),
                         ('DATE', date),
                         ('TITLE', f"{_p.get('name', _s.get('description'))} ({_s.get('symbol')})"),
                         ('DISPLAYSYMBOL',  _s.get('displaySymbol')),
@@ -113,7 +114,7 @@ class Service:
                     ]  
                 })
         except Exception as error:
-            self.logging.error(f"{response} - {response.text} - {str(error)}")
+            self.logging.error(f"{response} - {str(error)}")
             raise error
         
         response = { 'url': url, 'exchange': exchange, 'count': len(docsToIndex), 'response': (self.idol.index_into_idol(docsToIndex) if len(docsToIndex) > 0 else '') }

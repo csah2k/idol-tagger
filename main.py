@@ -24,11 +24,11 @@ srvcfg = {}
 with open('config.json') as json_configfile:
     config = json.load(json_configfile)
     srvcfg = config.get('service',{})
-logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=logging.INFO, handlers=[logging.FileHandler(srvcfg.get('logfile', logfile), 'w', 'utf-8')])
 scheduler = sched.scheduler(time.time, time.sleep)
 idolService = idol.Service(logging, config)
 
 def main():
+    logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=getLogLvl(srvcfg), handlers=[logging.FileHandler(srvcfg.get('logfile', logfile), 'w', 'utf-8')])
     logging.info("==============> Starting service... ")
     logging.info(srvcfg)
 
@@ -86,6 +86,15 @@ def run_index_task(task):
     # schedule next run
     scheduler.enter(task.get('interval', defInterval), 2, run_index_task, (task,))
     
+def getLogLvl(cfg):
+    lvl = cfg.get('loglevel', 'INFO').upper()
+    loglvl = logging.INFO if lvl == 'INFO' else None
+    if loglvl == None: loglvl = logging.DEBUG if lvl == 'DEBUG' else None
+    if loglvl == None: loglvl = logging.WARN if lvl == 'WARN' else None
+    if loglvl == None: loglvl = logging.WARNING if lvl == 'WARNING' else None
+    if loglvl == None: loglvl = logging.ERROR if lvl == 'ERROR' else None
+    if loglvl == None: loglvl = logging.FATAL if lvl == 'FATAL' else None
+    return loglvl
 
 
 

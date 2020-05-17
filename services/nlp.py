@@ -77,11 +77,11 @@ class Service:
         with codecs.open(target_file, 'a', 'utf-8') as outfile:
             for query in project.get('queries'):
                 # filter tagged or not contents
-                fieldText = query.get('fieldtext','')
-                fieldTextFilter = f"NOT EXISTS{{}}:{project.get('datafield')}"
-                if len(fieldText) > 1: fieldText = f"({fieldText}) AND ({fieldTextFilter})"
-                else: fieldText = fieldTextFilter
-                query['fieldtext'] = fieldText  
+                #fieldText = query.get('fieldtext','')
+                #fieldTextFilter = f"NOT EXISTS{{}}:{project.get('datafield')}"
+                #if len(fieldText) > 1: fieldText = f"({fieldText}) AND ({fieldTextFilter})"
+                #else: fieldText = fieldTextFilter
+                #query['fieldtext'] = fieldText  
                 query['print'] = 'all'
                 docsToMove = []
                 refsToMove = set()
