@@ -1,6 +1,6 @@
 {
     "service":{
-        "logfile": "service2.log",
+        "logfile": "service.log",
         "loglevel": "INFO"
     },
     "idol": {
@@ -27,8 +27,8 @@
         "projects": [
             {
                 "name": "sentiment",
-                "enabled": false,
-                "startrun": false,
+                "enabled": true,
+                "startrun": true,
                 "interval": 600,
                 "textfield": "TITLE",
                 "datafield": "NLP_SENTIMENT",
@@ -80,7 +80,7 @@
         {
             "name": "Feeds de noticias",
             "type": "rss",
-            "enabled": true,
+            "enabled": false,
             "startrun": true,
             "interval": 3600,
             "threads": 50,

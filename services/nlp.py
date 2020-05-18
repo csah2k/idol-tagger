@@ -35,7 +35,7 @@ class Service:
     def __init__(self, logging, config, idol): 
         self.logging = logging 
         self.config = config.get('nlp')
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='NlpPool')
         self.idol = idol 
         login = self.config.get('doccano')
         self.doccano_login(login.get('url'), login.get('username'), login.get('password'))
@@ -79,12 +79,6 @@ class Service:
         if os.path.exists(target_file): os.remove(target_file)
         with codecs.open(target_file, 'a', 'utf-8') as outfile:
             for query in project.get('queries'):
-                # filter tagged or not contents
-                #fieldText = query.get('fieldtext','')
-                #fieldTextFilter = f"NOT EXISTS{{}}:{project.get('datafield')}"
-                #if len(fieldText) > 1: fieldText = f"({fieldText}) AND ({fieldTextFilter})"
-                #else: fieldText = fieldTextFilter
-                #query['fieldtext'] = fieldText  
                 query['print'] = 'all'
                 docsToMove = []
                 refsToMove = set()
@@ -101,7 +95,7 @@ class Service:
                             #'title': hit.get('title'),
                             'link': getDocLink(doc),
                             'date': getDocDate(doc),
-                            'database': hit.get('database'),
+                            #'database': hit.get('database'),
                             'reference': hit.get('reference')                         
                         }
                         meta.update(getDocFilters(doc))
@@ -141,21 +135,26 @@ class Service:
 
     def export_doccano_to_idol_sync(self, project):
         project = self.populateProject(project)
-        #tempFile = project.get('tempfile', project.get('name')+'.tmp')
-        #dataFolder = self.config.get('tempfolder', 'data')
-        #target_file = os.path.join(dataFolder, tempFile)
-        #if os.path.exists(target_file): os.remove(target_file)
-
-        resp = self.doccano_client.get_doc_download(project.get('id'), 'jsonl')
-        self.logging.info(resp.text)
-        #with codecs.open(target_file, 'a', 'utf-8') as outfile:   
-        #    outfile.write(resp.text)
-        ## TODO parse and index into idol
-
-        return resp
-        
-
-    
+        resp = self.doccano_client.get_doc_download(project.get('id'), 'json')
+        for line in resp.text.splitlines():
+            self.logging.info(line)
+            data = json.loads(line)
+            reference = data.get('meta',{}).get('reference')
+            labels = json.dumps(data.get('annotations',[]), ensure_ascii=False).encode('utf8')
+            text = data.get('text','')
+            # get same doc from idol
+            query = {
+                'DatabaseMatch': project.get('database'),
+                'Reference': reference
+            }
+            idolDoc = self.idol.get_content(query)
+            if idolDoc != None: 
+                # update fields
+                idolDoc['content']['DOCUMENT'][0][project.get('textfield')] = [text]
+                idolDoc['content']['DOCUMENT'][0][project.get('datafield')] = [labels.decode()]                
+                # index updated document
+                self.idol.index_into_idol([idolDoc], project.get('database'))
+                self.doccano_client.delete_document(project.get('id'), data.get('id'))
                 
  
     @plac.annotations(
@@ -403,7 +402,7 @@ def getDocFilters(doc):
     links = doc.get(f'{filters_fieldprefix}_LNKS', [])
     prefix = filters_fieldprefix.lower()
     return {
-        f'{prefix}_databases': ','.join(dbname),
-        f'{prefix}_references': ','.join(references),
+        #f'{prefix}_databases': ','.join(dbname),
+        #f'{prefix}_references': ','.join(references),
         f'{prefix}_links': ','.join(links)
     }

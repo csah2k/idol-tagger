@@ -56,11 +56,12 @@ def schedule_nlp_tasks(scheduler):
 def run_nlp_task(task, scheduler):
     logging.info(f"Running nlp project '{task.get('name')}' task ...")
     nlpService = nlp.Service(logging, config, idolService)
-    # Docano => IDOL
-    #nlpService.export_doccano_to_idol(task)
-    
+
     # IDOL => Doccano
     nlpService.export_idol_to_doccano(task)
+
+    # Docano => IDOL
+    nlpService.export_doccano_to_idol(task)
 
     # schedule next run
     if scheduler != None:

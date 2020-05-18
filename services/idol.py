@@ -21,7 +21,7 @@ class Service:
     def __init__(self, logging, config): 
         self.logging = logging
         self.config = config.get('idol')
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='IdolPool')
         self.index_queues_lock = threading.Lock()
         concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='IdolScheduler').submit(self.init_batch_queue)
 
@@ -104,7 +104,7 @@ class Service:
     @retry(wait_fixed=10000, stop_max_delay=30000)
     def _remove_documents(self, refers, priority):
         query = {
-            'Docs': ','.join(refers),
+            'Docs': '+'.join(refers),
             'Priority': priority
         }
         resp = requests.get(f"{makeUrl(self.config.get('dih'))}/DREDELETEREF?{urllib.parse.urlencode(query)}", headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
@@ -146,6 +146,15 @@ class Service:
         hits = response.json().get('autnresponse', {}).get('responsedata', {}).get('hit', [])
         self.logging.debug(f"Idol query results: {len(hits)}") 
         return hits
+
+    def get_content(self, query={}):    
+        return self.executor.submit(self._get_content, query).result()
+
+    @retry(wait_fixed=10000, stop_max_delay=30000)
+    def _get_content(self, query):    
+        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=GetContent&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(query))}", verify=False)   
+        hits = response.json().get('autnresponse', {}).get('responsedata', {}).get('hit', [])
+        return hits[0] if len(hits) > 0 else None
 
     def detect_language(self, text):    
         return self.executor.submit(self._detect_language, text).result()

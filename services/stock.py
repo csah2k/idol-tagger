@@ -11,7 +11,6 @@ filters_fieldprefix = 'FILTERINDEX'
 
 # https://finnhub.io/docs/api
 class Service:
-
     
     executor = None
     logging = None
@@ -21,7 +20,7 @@ class Service:
     def __init__(self, logging, config, idol): 
         self.logging = logging
         self.config = config
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='StockPool')
         self.idol = idol 
 
     @retry(wait_fixed=10000, stop_max_delay=70000)

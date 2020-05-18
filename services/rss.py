@@ -24,7 +24,7 @@ class Service:
     def __init__(self, logging, config, idol): 
         self.logging = logging 
         self.config = config
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2))
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='RssPool')
         self.idol = idol 
         self.text_maker = html2text.HTML2Text()
         self.text_maker.ignore_links = True
