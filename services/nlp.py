@@ -18,6 +18,7 @@ from doccano_api_client import DoccanoClient
 from requests.structures import CaseInsensitiveDict
 filters_fieldprefix = 'FILTERINDEX'
 
+
 # https://github.com/doccano/doccano
 # https://github.com/afparsons/doccano_api_client
 
@@ -41,9 +42,9 @@ class Service:
         self.doccano_login(login.get('url'), login.get('username'), login.get('password'))
 
     def doccano_login(self, url, username, password):
-        return self.executor.submit(self.doccano_login_sync, url, username, password).result()
+        return self.executor.submit(self._doccano_login, url, username, password).result()
 
-    def doccano_login_sync(self, url, username, password):
+    def _doccano_login(self, url, username, password):
         self.doccano_client = DoccanoClient(url, username, password)
         r_me = self.doccano_client.get_me().json()
         self.logging.info(f"Doccano login: {r_me}")
@@ -66,13 +67,14 @@ class Service:
         return project
 
     def export_idol_to_doccano(self, project):
+        self.logging.info(f"==== Exporting ====>  Idol -> Doccano ({project.get('name')})")
         self.export_training_from_idol(project)
         self.import_training_into_doccano(project)
 
     def export_training_from_idol(self, project):
-        return self.executor.submit(self.export_training_from_idol_sync, project).result()
+        return self.executor.submit(self._export_training_from_idol, project).result()
 
-    def export_training_from_idol_sync(self, project):
+    def _export_training_from_idol(self, project):
         tempFile = project.get('tempfile', project.get('name')+'.tmp')
         dataFolder = self.config.get('tempfolder', 'data')
         target_file = os.path.join(dataFolder, tempFile)
@@ -81,7 +83,6 @@ class Service:
             for query in project.get('queries'):
                 query['print'] = 'all'
                 docsToMove = []
-                refsToMove = set()
                 hits = self.idol.query(query)
                 for hit in hits:
                     doc = hit.get('content',{}).get('DOCUMENT',[{}])[0]
@@ -92,28 +93,25 @@ class Service:
                         labels = json.loads(doc.get(project.get('datafield'), ['[]'])[0])
                         hit['fields'] = [(project.get('datafield'), labels)]
                         meta = {
-                            #'title': hit.get('title'),
                             'link': getDocLink(doc),
                             'date': getDocDate(doc),
-                            #'database': hit.get('database'),
-                            'reference': hit.get('reference')                         
+                            'language': doc.get('LANGUAGE', ''),
+                            'reference': hit.get('reference')
                         }
                         meta.update(getDocFilters(doc))
                         jsonl = json.dumps({'text': text, 'labels': labels, 'meta': meta}, ensure_ascii=False).encode('utf8')
                         outfile.write(jsonl.decode()+'\n')
-                        refsToMove.add(hit.get('reference'))
+                        self.idol.remove_document(hit.get('reference'), hit.get('database'), 100)
                         docsToMove.append(hit)
-
                 # Move the selected docs to a staging database
-                if len(refsToMove) > 0: 
-                    self.idol.remove_documents(refsToMove, 100)
-                    self.idol.index_into_idol(docsToMove, project.get('database'), 80)
+                if len(docsToMove) > 0: 
+                    self.idol.index_into_idol(docsToMove, project.get('database'), 100)
                 
 
     def import_training_into_doccano(self, project):
-        return self.executor.submit(self.import_training_into_doccano_sync, project).result()
+        return self.executor.submit(self._import_training_into_doccano, project).result()
 
-    def import_training_into_doccano_sync(self, project):
+    def _import_training_into_doccano(self, project):
         project = self.populateProject(project)
         tempFile = project.get('tempfile', project.get('name')+'.tmp')
         dataFolder = self.config.get('tempfolder', 'data')
@@ -121,7 +119,6 @@ class Service:
         if not os.path.exists(file_path):
             self.logging.error(f"File not exists: {file_path}")
             return
-
         resp = self.doccano_client.post_doc_upload(project.get('id'), 'json', tempFile, dataFolder)
         if 200 <= resp.status_code < 300:
             self.logging.info(f"File uploaded to Doccano ({resp.status_code}): '{file_path}'")
@@ -131,30 +128,169 @@ class Service:
         return resp
 
     def export_doccano_to_idol(self, project):
-        return self.executor.submit(self.export_doccano_to_idol_sync, project).result()
+        self.logging.info(f"==== Exporting ====>  Doccano -> Idol ({project.get('name')})")
+        return self.executor.submit(self._export_doccano_to_idol, project).result()
 
-    def export_doccano_to_idol_sync(self, project):
+    def _export_doccano_to_idol(self, project):
         project = self.populateProject(project)
         resp = self.doccano_client.get_doc_download(project.get('id'), 'json')
+        docsToIndex = []
         for line in resp.text.splitlines():
-            self.logging.info(line)
-            data = json.loads(line)
-            reference = data.get('meta',{}).get('reference')
-            labels = json.dumps(data.get('annotations',[]), ensure_ascii=False).encode('utf8')
-            text = data.get('text','')
-            # get same doc from idol
-            query = {
-                'DatabaseMatch': project.get('database'),
-                'Reference': reference
-            }
-            idolDoc = self.idol.get_content(query)
-            if idolDoc != None: 
-                # update fields
-                idolDoc['content']['DOCUMENT'][0][project.get('textfield')] = [text]
-                idolDoc['content']['DOCUMENT'][0][project.get('datafield')] = [labels.decode()]                
-                # index updated document
-                self.idol.index_into_idol([idolDoc], project.get('database'))
-                self.doccano_client.delete_document(project.get('id'), data.get('id'))
+            self.logging.debug(line)
+            doccanoDoc = json.loads(line)
+            if doccanoDoc.get('annotation_approver', None) != None:            
+                reference = doccanoDoc.get('meta',{}).get('reference')
+                labels = json.dumps(doccanoDoc.get('annotations',[]), ensure_ascii=False).encode('utf8')
+                text = doccanoDoc.get('text','')
+                # get same doc from idol
+                query = {
+                    'DatabaseMatch': project.get('database'),
+                    'Reference': reference
+                }
+                idolDoc = self.idol.get_content(query)
+                self.logging.debug(idolDoc)
+                if idolDoc != None:
+                    self.logging.info(f"Document exported [doccano:{doccanoDoc.get('id')} -> idol:{idolDoc.get('id')}]") 
+                    # update fields
+                    idolDoc['content']['DOCUMENT'][0][project.get('textfield')] = [text]
+                    idolDoc['content']['DOCUMENT'][0][project.get('datafield')] = [labels.decode()]                
+                    docsToIndex.append(idolDoc)
+                    self.doccano_client.delete_document(project.get('id'), doccanoDoc.get('id'))
+                else:
+                    self.logging.warn(f"Can't find reference in idol [doccano:{doccanoDoc.get('id')} -> idol:{reference}]")
+        if len(docsToIndex) > 0: 
+            # index updated document
+            self.idol.index_into_idol(docsToIndex, project.get('database'), 100)
+
+    def load_classifier_data(self, project, limit=100, split=0.8):
+        project = self.populateProject(project)
+        # Partition off part of the train data for evaluation
+        train_data = []
+        query = {
+            'DatabaseMatch': project.get('database'),
+            'FieldText': f"TERM{{label}}:{project.get('datafield')}",
+            'PrintFields': f"{project.get('datafield')},{project.get('textfield')}",
+            'AnyLanguage': True,
+            'MaxResults': limit,
+            'Text': '*'
+        }
+        hits = self.idol.query(query)
+        for hit in hits:
+            text = hit['content']['DOCUMENT'][0][project.get('textfield')][0]
+            data = json.loads(hit['content']['DOCUMENT'][0][project.get('datafield')][0])
+            labels = [_l.get('label') for _l in data]
+            train_data.append((text, labels)) 
+
+        if len(train_data) > 1:
+            random.shuffle(train_data)
+            train_data = train_data[-limit:]
+            texts, labels = zip(*train_data)
+            project_labels = self.doccano_client.get_label_list(project.get('id'))
+
+            labels_map = {}
+            labels_template = {}
+            for _l in project_labels.json():
+                labels_map[_l.get('id')] = _l.get('text')
+                labels_template[_l.get('text')] = False
+
+            cats = []
+            for _lbls in labels:
+                cat = labels_template.copy()
+                for _l in _lbls:
+                    cat.update({labels_map[_l]:True})
+                cats.append(cat)
+
+            #self.logging.info(f"cats: {cats}")
+            split = int(len(train_data) * split)
+            return (texts[:split], cats[:split]), (texts[split:], cats[split:]), labels_template.keys()
+        self.logging.warn(f"No Idol results to create training data: {query}")
+        return ([], []), ([], []), labels_template.keys()
+
+
+    def train_model_classifier(self, project, model=None, output_dir=None, n_iter=20, n_texts=2000, init_tok2vec=None):  
+        self.logging.info(f"==== Training model ====>  ({project.get('name')})")  
+        if model is not None:
+            self.logging.info("Loading model '%s'" % model)
+            nlp = spacy.load(model)  # load existing spaCy model
+        else:
+            self.logging.info("Creating blank 'en' model")
+            nlp = spacy.blank("en")  # create blank Language class
+            
+        # add the text classifier to the pipeline if it doesn't exist
+        # nlp.create_pipe works for built-ins that are registered with spaCy
+        if "textcat" not in nlp.pipe_names:
+            textcat = nlp.create_pipe(
+                "textcat", config={"exclusive_classes": True, "architecture": "simple_cnn"}
+            )
+            nlp.add_pipe(textcat, last=True)
+        # otherwise, get it, so we can add labels to it
+        else:
+            textcat = nlp.get_pipe("textcat")
+
+        # load the IMDB dataset
+        self.logging.info("Loading classifier data...")
+        (train_texts, train_cats), (dev_texts, dev_cats), categories = self.load_classifier_data(project)
+
+        # add label to text classifier
+        self.logging.info(f"Categories: {categories}")
+        for cat in categories:
+            textcat.add_label(cat)
+
+        train_texts = train_texts[:n_texts]
+        train_cats = train_cats[:n_texts]
+        self.logging.info(f"Using {n_texts} examples ({len(train_texts)} training, {len(dev_texts)} evaluation)")
+        train_data = list(zip(train_texts, [{"cats": cats} for cats in train_cats]))
+
+        # get names of other pipes to disable them during training
+        pipe_exceptions = ["textcat", "trf_wordpiecer", "trf_tok2vec"]
+        other_pipes = [pipe for pipe in nlp.pipe_names if pipe not in pipe_exceptions]
+        with nlp.disable_pipes(*other_pipes):  # only train textcat
+            optimizer = nlp.begin_training()
+            if init_tok2vec is not None:
+                with init_tok2vec.open("rb") as file_:
+                    textcat.model.tok2vec.from_bytes(file_.read())
+            self.logging.info("Training the model...")
+            self.logging.info("{:^5}\t{:^5}\t{:^5}\t{:^5}".format("LOSS", "P", "R", "F"))
+            batch_sizes = compounding(4.0, 32.0, 1.001)
+            for _i in range(n_iter):
+                losses = {}
+                # batch up the examples using spaCy's minibatch
+                random.shuffle(train_data)
+                batches = minibatch(train_data, size=batch_sizes)
+                for batch in batches:
+                    texts, annotations = zip(*batch)
+                    nlp.update(texts, annotations, sgd=optimizer, drop=0.2, losses=losses)
+                with textcat.model.use_params(optimizer.averages):
+                    # evaluate on the dev data split off in load_data()
+                    scores = self.evaluate(nlp.tokenizer, textcat, dev_texts, dev_cats)
+                self.logging.info(
+                    "{0:.3f}\t{1:.3f}\t{2:.3f}\t{3:.3f}".format(  # print a simple table
+                        losses["textcat"],
+                        scores["textcat_p"],
+                        scores["textcat_r"],
+                        scores["textcat_f"],
+                    )
+                )
+        # test the trained model
+        test_text = "Aggressive treatment against covid war in all countries"
+        doc = nlp(test_text)
+        best_cat = ('', 0)
+        for _cat in doc.cats:
+            if doc.cats[_cat] > best_cat[1]:
+                best_cat = (_cat, doc.cats[_cat])
+
+        self.logging.info(f"{best_cat} : {test_text}")
+
+        if output_dir is not None:
+            with nlp.use_params(optimizer.averages):
+                nlp.to_disk(output_dir)
+            self.logging.info(f"Saved model to {output_dir}")
+
+            # test the saved model
+            self.logging.info(f"Loading from {output_dir}")
+            nlp2 = spacy.load(output_dir)
+            doc2 = nlp2(test_text)
+            self.logging.info(test_text, doc2.cats)
                 
  
     @plac.annotations(
@@ -397,8 +533,8 @@ def getDocDate(doc):
     return doc.get('DATE', doc.get('DREDATE', doc.get('TIMESTAMP', [''] )))[0]   
 
 def getDocFilters(doc):
-    references = doc.get(f'{filters_fieldprefix}_REFS', [])
-    dbname = doc.get(f'{filters_fieldprefix}_DBS', [])
+    #references = doc.get(f'{filters_fieldprefix}_REFS', [])
+    #dbname = doc.get(f'{filters_fieldprefix}_DBS', [])
     links = doc.get(f'{filters_fieldprefix}_LNKS', [])
     prefix = filters_fieldprefix.lower()
     return {

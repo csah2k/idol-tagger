@@ -2,6 +2,7 @@
 
 import re 
 import html
+import logging
 import requests
 import datetime
 import concurrent.futures

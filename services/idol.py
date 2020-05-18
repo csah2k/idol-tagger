@@ -3,6 +3,7 @@
 import time
 import sched
 import urllib
+import logging
 import requests
 import threading
 import concurrent.futures
@@ -57,8 +58,11 @@ class Service:
             'Priority': priority
         }
         # add to queue
-        self.add_into_batch_queue(query, index_data)
-
+        if priority >= 100:
+            self.post_index_data(query, [(None, query, index_data)])
+        else:
+            self.add_into_batch_queue(query, index_data)
+    
 
     def init_batch_queue(self):
         self.logging.info(f"Starting idol index batch queue ...")
@@ -98,17 +102,18 @@ class Service:
         self.logging.debug(f"document added to index batch queue, current queue size: {len(self.index_queues[query_uuid])}")
         self.index_queues_lock.release()
 
-    def remove_documents(self, refers, priority=0):
-        return self.executor.submit(self._remove_documents, refers, priority).result()
+    def remove_document(self, reference, dbname, priority=0):
+        return self.executor.submit(self._remove_document, reference, dbname, priority)
 
     @retry(wait_fixed=10000, stop_max_delay=30000)
-    def _remove_documents(self, refers, priority):
+    def _remove_document(self, reference, dbname, priority=0):
         query = {
-            'Docs': '+'.join(refers),
-            'Priority': priority
+            'Priority': priority,
+            'DREDbName': dbname,
+            'Docs': reference
         }
         resp = requests.get(f"{makeUrl(self.config.get('dih'))}/DREDELETEREF?{urllib.parse.urlencode(query)}", headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
-        self.logging.info(f"Removed docs: {len(refers)}, resp: [{resp}]")
+        self.logging.info(f"Removed ref {reference} in {dbname}, resp: [{resp}]")
         return resp
 
     def move_to_database(self, source_dbs, target_db, refers=[]):

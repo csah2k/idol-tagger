@@ -4,6 +4,7 @@ import time
 import uuid 
 import html
 import random
+import logging
 import datetime
 import html2text
 import feedparser

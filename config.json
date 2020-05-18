@@ -29,7 +29,7 @@
                 "name": "sentiment",
                 "enabled": true,
                 "startrun": true,
-                "interval": 600,
+                "interval": 120,
                 "textfield": "TITLE",
                 "datafield": "NLP_SENTIMENT",
                 "database": "TRAINING_SENTIMENT",
@@ -39,24 +39,7 @@
                         "AnyLanguage": true,
                         "MinScore" : 20,
                         "MaxResults": 3,
-                        "Text" : "bolsonaro"
-                    }
-                ]
-            },
-            {
-                "name": "rss ner",
-                "enabled": false,
-                "interval": 600,
-                "textfield": "DRECONTENT",
-                "datafield": "NLP_ENTITIES",
-                "database": "TRAINING_ENTITIES",
-                "queries": [
-                    {
-                        "DatabaseMatch" : "RSS_FEEDS",
-                        "AnyLanguage": true,
-                        "MinScore" : 30,
-                        "MaxResults": 10,
-                        "Text" : "Apple AND Google"
+                        "Text" : "DUMMY"
                     }
                 ]
             }
