@@ -80,16 +80,24 @@ class Service:
         target_file = os.path.join(dataFolder, tempFile)
         if os.path.exists(target_file): os.remove(target_file)
         with codecs.open(target_file, 'a', 'utf-8') as outfile:
-            for query in project.get('queries'):
+            for _query in project.get('queries'):
+                query = _query.copy()
+                # filter documents already in this training project
+                fieldText = query.get('fieldtext','')
+                fieldTextFilter = f"NOT EXISTS{{}}:{project.get('datafield')}"
+                if len(fieldText) > 1: fieldText = f"({fieldText}) AND ({fieldTextFilter})"
+                else: fieldText = fieldTextFilter
+                query['fieldtext'] = fieldText  
                 query['print'] = 'all'
                 docsToMove = []
                 hits = self.idol.query(query)
+                self.logging.info(f"IDOL - hits: {len(hits)}, query: {query}")
                 for hit in hits:
                     doc = hit.get('content',{}).get('DOCUMENT',[{}])[0]
                     text = doc.get(project.get('textfield'), [''])[0]
                     if len(text.strip()) > 10:
-                        #{"text": "Great price.", "labels": ["positive"]}
-                        #{"text": "President Obama", "labels": [ [10, 15, "PERSON"] ]}
+                        # CLASSIFICATION  ====>   {"text": "Great price.", "labels": ["positive"]}
+                        # ENTITY EXTRACTION ==>   {"text": "President Obama", "labels": [ [10, 15, "PERSON"] ]}
                         labels = json.loads(doc.get(project.get('datafield'), ['[]'])[0])
                         hit['fields'] = [(project.get('datafield'), labels)]
                         meta = {
@@ -101,13 +109,18 @@ class Service:
                         meta.update(getDocFilters(doc))
                         jsonl = json.dumps({'text': text, 'labels': labels, 'meta': meta}, ensure_ascii=False).encode('utf8')
                         outfile.write(jsonl.decode()+'\n')
-                        self.idol.remove_document(hit.get('reference'), hit.get('database'), 100)
                         docsToMove.append(hit)
-                # Move the selected docs to a staging database
+                # MOVE the selected docs to a staging database
                 if len(docsToMove) > 0: 
-                    self.idol.index_into_idol(docsToMove, project.get('database'), 100)
+                    query = {
+                        'DREDbName': project.get('database'),
+                        'KillDuplicates': 'REFERENCE', ## check for the same reference ONLY in 'DREDbName' database
+                        'CreateDatabase': True,
+                        'KeepExisting': True, ## do not replace content for matched references in KillDuplicates
+                        'Priority': 100
+                    }
+                    self.idol.index_into_idol(docsToMove, query)
                 
-
     def import_training_into_doccano(self, project):
         return self.executor.submit(self._import_training_into_doccano, project).result()
 
@@ -124,7 +137,7 @@ class Service:
             self.logging.info(f"File uploaded to Doccano ({resp.status_code}): '{file_path}'")
             if os.path.exists(file_path): os.remove(file_path)
         else:
-            self.logging.error(f"Erro uploading file: {tempFile}, code: {resp.status_code}")
+            self.logging.error(f"Erro uploading file to Doccano: {tempFile}, code: {resp.status_code}")
         return resp
 
     def export_doccano_to_idol(self, project):
@@ -164,35 +177,38 @@ class Service:
 
     def load_classifier_data(self, project, limit=100, split=0.8):
         project = self.populateProject(project)
-        # Partition off part of the train data for evaluation
         train_data = []
+        # query documents from this project database in IDOL
         query = {
             'DatabaseMatch': project.get('database'),
             'FieldText': f"TERM{{label}}:{project.get('datafield')}",
             'PrintFields': f"{project.get('datafield')},{project.get('textfield')}",
-            'AnyLanguage': True,
+            'AnyLanguage': True, ## TODO run this 'load_classifier_data' and 'train_model_classifier' for each existing LANGUAGE values
             'MaxResults': limit,
             'Text': '*'
         }
         hits = self.idol.query(query)
+
+        # parse documents into expected 'spacy' format
         for hit in hits:
             text = hit['content']['DOCUMENT'][0][project.get('textfield')][0]
             data = json.loads(hit['content']['DOCUMENT'][0][project.get('datafield')][0])
             labels = [_l.get('label') for _l in data]
             train_data.append((text, labels)) 
-
         if len(train_data) > 1:
             random.shuffle(train_data)
             train_data = train_data[-limit:]
             texts, labels = zip(*train_data)
-            project_labels = self.doccano_client.get_label_list(project.get('id'))
 
+            # list categories (labels) from Doccano
+            project_labels = self.doccano_client.get_label_list(project.get('id'))
             labels_map = {}
             labels_template = {}
             for _l in project_labels.json():
                 labels_map[_l.get('id')] = _l.get('text')
                 labels_template[_l.get('text')] = False
 
+            # extract categories
             cats = []
             for _lbls in labels:
                 cat = labels_template.copy()
@@ -200,14 +216,16 @@ class Service:
                     cat.update({labels_map[_l]:True})
                 cats.append(cat)
 
-            #self.logging.info(f"cats: {cats}")
+            # Partition off part of the train data for evaluation
             split = int(len(train_data) * split)
-            return (texts[:split], cats[:split]), (texts[split:], cats[split:]), labels_template.keys()
-        self.logging.warn(f"No Idol results to create training data: {query}")
-        return ([], []), ([], []), labels_template.keys()
-
+            return (texts[:split], cats[:split]), (texts[split:], cats[split:]), list(labels_template.keys())
+        self.logging.warn(f"No enough Idol results to create training data: {len(train_data)}")
+        return ([], []), ([], []), []
 
     def train_model_classifier(self, project, model=None, output_dir=None, n_iter=20, n_texts=2000, init_tok2vec=None):  
+        return self.executor.submit(self._train_model_classifier, project, model, output_dir, n_iter, n_texts, init_tok2vec).result()
+
+    def _train_model_classifier(self, project, model=None, output_dir=None, n_iter=20, n_texts=2000, init_tok2vec=None):  
         self.logging.info(f"==== Training model ====>  ({project.get('name')})")  
         if model is not None:
             self.logging.info("Loading model '%s'" % model)
@@ -219,17 +237,18 @@ class Service:
         # add the text classifier to the pipeline if it doesn't exist
         # nlp.create_pipe works for built-ins that are registered with spaCy
         if "textcat" not in nlp.pipe_names:
-            textcat = nlp.create_pipe(
-                "textcat", config={"exclusive_classes": True, "architecture": "simple_cnn"}
-            )
+            textcat = nlp.create_pipe("textcat", config={"exclusive_classes": True, "architecture": "simple_cnn"})
             nlp.add_pipe(textcat, last=True)
         # otherwise, get it, so we can add labels to it
         else:
             textcat = nlp.get_pipe("textcat")
 
-        # load the IMDB dataset
+        # load correct dataset from IDOL
         self.logging.info("Loading classifier data...")
         (train_texts, train_cats), (dev_texts, dev_cats), categories = self.load_classifier_data(project)
+        if len(categories) == 0 or len(train_texts) == 0:
+            self.logging.info("No new training data found in idol")
+            return
 
         # add label to text classifier
         self.logging.info(f"Categories: {categories}")
@@ -250,7 +269,7 @@ class Service:
                 with init_tok2vec.open("rb") as file_:
                     textcat.model.tok2vec.from_bytes(file_.read())
             self.logging.info("Training the model...")
-            self.logging.info("{:^5}\t{:^5}\t{:^5}\t{:^5}".format("LOSS", "P", "R", "F"))
+            self.logging.debug("{:^5}\t{:^5}\t{:^5}\t{:^5}".format("LOSS", "P", "R", "F"))
             batch_sizes = compounding(4.0, 32.0, 1.001)
             for _i in range(n_iter):
                 losses = {}
@@ -263,7 +282,7 @@ class Service:
                 with textcat.model.use_params(optimizer.averages):
                     # evaluate on the dev data split off in load_data()
                     scores = self.evaluate(nlp.tokenizer, textcat, dev_texts, dev_cats)
-                self.logging.info(
+                self.logging.debug(
                     "{0:.3f}\t{1:.3f}\t{2:.3f}\t{3:.3f}".format(  # print a simple table
                         losses["textcat"],
                         scores["textcat_p"],
@@ -278,7 +297,6 @@ class Service:
         for _cat in doc.cats:
             if doc.cats[_cat] > best_cat[1]:
                 best_cat = (_cat, doc.cats[_cat])
-
         self.logging.info(f"{best_cat} : {test_text}")
 
         if output_dir is not None:
@@ -368,134 +386,11 @@ class Service:
         
 
 
-    @plac.annotations(
-        model=("Model name. Defaults to blank 'en' model.", "option", "m", str),
-        output_dir=("Optional output directory", "option", "o", Path),
-        n_texts=("Number of texts to train from", "option", "t", int),
-        n_iter=("Number of training iterations", "option", "n", int),
-        init_tok2vec=("Pretrained tok2vec weights", "option", "t2v", Path),
-    )
-    def train_model_sentiment(self, model=None, output_dir=None, n_iter=20, n_texts=2000, init_tok2vec=None):    
-        if model is not None:
-            nlp = spacy.load(model)  # load existing spaCy model
-            logging.info("Loaded model '%s'" % model)
-        else:
-            nlp = spacy.blank("en")  # create blank Language class
-            logging.info("Created blank 'en' model")
-        # add the text classifier to the pipeline if it doesn't exist
-        # nlp.create_pipe works for built-ins that are registered with spaCy
-        if "textcat" not in nlp.pipe_names:
-            textcat = nlp.create_pipe(
-                "textcat", config={"exclusive_classes": True, "architecture": "simple_cnn"}
-            )
-            nlp.add_pipe(textcat, last=True)
-        # otherwise, get it, so we can add labels to it
-        else:
-            textcat = nlp.get_pipe("textcat")
-
-        # add label to text classifier
-        textcat.add_label("POSITIVE")
-        textcat.add_label("NEGATIVE")
-
-        # load the IMDB dataset
-        logging.info("Loading sementiment data...")
-        (train_texts, train_cats), (dev_texts, dev_cats) = self.load_sentiment_data()
-        train_texts = train_texts[:n_texts]
-        train_cats = train_cats[:n_texts]
-        logging.info(
-            "Using {} examples ({} training, {} evaluation)".format(
-                n_texts, len(train_texts), len(dev_texts)
-            )
-        )
-        train_data = list(zip(train_texts, [{"cats": cats} for cats in train_cats]))
-
-        # get names of other pipes to disable them during training
-        pipe_exceptions = ["textcat", "trf_wordpiecer", "trf_tok2vec"]
-        other_pipes = [pipe for pipe in nlp.pipe_names if pipe not in pipe_exceptions]
-        with nlp.disable_pipes(*other_pipes):  # only train textcat
-            optimizer = nlp.begin_training()
-            if init_tok2vec is not None:
-                with init_tok2vec.open("rb") as file_:
-                    textcat.model.tok2vec.from_bytes(file_.read())
-            logging.info("Training the model...")
-            logging.info("{:^5}\t{:^5}\t{:^5}\t{:^5}".format("LOSS", "P", "R", "F"))
-            batch_sizes = compounding(4.0, 32.0, 1.001)
-            for _i in range(n_iter):
-                losses = {}
-                # batch up the examples using spaCy's minibatch
-                random.shuffle(train_data)
-                batches = minibatch(train_data, size=batch_sizes)
-                for batch in batches:
-                    texts, annotations = zip(*batch)
-                    nlp.update(texts, annotations, sgd=optimizer, drop=0.2, losses=losses)
-                with textcat.model.use_params(optimizer.averages):
-                    # evaluate on the dev data split off in load_data()
-                    scores = self.evaluate(nlp.tokenizer, textcat, dev_texts, dev_cats)
-                print(
-                    "{0:.3f}\t{1:.3f}\t{2:.3f}\t{3:.3f}".format(  # print a simple table
-                        losses["textcat"],
-                        scores["textcat_p"],
-                        scores["textcat_r"],
-                        scores["textcat_f"],
-                    )
-                )
-        # test the trained model
-        test_text = "Aggressive treatment against covid war in all countries"
-        doc = nlp(test_text)
-        logging.info(test_text, doc.cats)
-
-        if output_dir is not None:
-            with nlp.use_params(optimizer.averages):
-                nlp.to_disk(output_dir)
-            logging.info(f"Saved model to {output_dir}")
-
-            # test the saved model
-            logging.info(f"Loading from {output_dir}")
-            nlp2 = spacy.load(output_dir)
-            doc2 = nlp2(test_text)
-            logging.info(test_text, doc2.cats)
-
-
     def load_entity_data(self, limit=0, split=0.8):
         # Partition off part of the train data for evaluation
         train_data = []
         #[ ("E TEMPO DE APRENDER-MEU PRIMEIRO LIVRO (EDUCAÇÃO INFANTIL)", {"entities": [(0, 58, "LIVRO")]}), ]
-        with open('data/entity.csv', newline='\n') as csvfile:
-            spamreader = csv.reader(csvfile, delimiter=',', quotechar='"', skipinitialspace=True)
-            for row in spamreader:
-                text = row[3]
-                label = int(row[2])
-                train_data.append((text, label)) 
-
         return train_data
-
-    def load_sentiment_data(self, limit=0, split=0.8):
-        # Partition off part of the train data for evaluation
-        train_data = []
-        with open('data/sentiment.csv', newline='\n') as csvfile:
-            spamreader = csv.reader(csvfile, delimiter=',', quotechar='"', skipinitialspace=True)
-            for row in spamreader:
-                text = row[3]
-                label = int(row[2])
-                train_data.append((text, label)) 
-        random.shuffle(train_data)
-        train_data = train_data[-limit:]
-        texts, labels = zip(*train_data)
-        #print(labels)
-        cats = [{"POSITIVE": bool(y == 1), "NEGATIVE": not bool(y == 1)} for y in labels]
-        split = int(len(train_data) * split)
-        return (texts[:split], cats[:split]), (texts[split:], cats[split:])
-
-    def load_data_imdb(self, limit=0, split=0.8):
-        """Load data from the IMDB dataset."""
-        # Partition off part of the train data for evaluation
-        train_data, _ = thinc.extra.datasets.imdb()
-        random.shuffle(train_data)
-        train_data = train_data[-limit:]
-        texts, labels = zip(*train_data)
-        cats = [{"POSITIVE": bool(y), "NEGATIVE": not bool(y)} for y in labels]
-        split = int(len(train_data) * split)
-        return (texts[:split], cats[:split]), (texts[split:], cats[split:])
 
     def evaluate(self, tokenizer, textcat, texts, cats):
         docs = (tokenizer(text) for text in texts)

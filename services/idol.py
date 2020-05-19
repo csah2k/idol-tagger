@@ -26,11 +26,11 @@ class Service:
         self.index_queues_lock = threading.Lock()
         concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='IdolScheduler').submit(self.init_batch_queue)
 
-    def index_into_idol(self, documents, target_db, priority=0):
-        self.executor.submit(self._index_into_idol, documents, target_db, priority)
+    def index_into_idol(self, documents, query):
+        self.executor.submit(self._index_into_idol, documents, query)
 
-    @retry(wait_fixed=2000, stop_max_delay=10000)
-    def _index_into_idol(self, documents, target_db, priority=0):
+    def _index_into_idol(self, documents, query):
+        query = CaseInsensitiveDict(query.copy())
         index_data = ''
         for _d in documents:
             fields = _d.get('fields', [])
@@ -51,23 +51,30 @@ class Service:
             [f"#DRECONTENT",
             f"{content}",
             "#DREENDDOC\n\n"])
-        #index_data = index_data + "#DREENDDATAREFERENCE"
-        query = {
-            'DREDbName': target_db,
-            'CreateDatabase' : True,
-            'Priority': priority
-        }
         # add to queue
-        if priority >= 100:
-            self.post_index_data(query, [(None, query, index_data)])
+        if query.get('priority', 0) >= 100: # bypass queue
+            self.post_index_data(query, [(None, query, index_data, len(documents))])
         else:
-            self.add_into_batch_queue(query, index_data)
-    
+            self.add_into_batch_queue(query, index_data, len(documents))
+
+    def set_field_value(self, references, field, value, query={}):
+        self.executor.submit(self._set_field_value, references, field, value, query)
+
+    def _set_field_value(self, references, field, value, query={}):
+        index_data = ''
+        for reference in references:
+            index_data += '\n'.join([
+                f"#DREDOCREF {reference}",
+                f"#DREFIELDNAME {field}",
+                f"#DREFIELDVALUE {value}"])
+        index_data += "\n#DREENDDATAREFERENCE\n\n"
+        resp = requests.post(f"{makeUrl(self.config.get('dih'))}/DREREPLACE?{urllib.parse.urlencode(query)}", data=index_data.encode('utf-8'), headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
+        self.logging.info(f"set_field_value: {resp}")
 
     def init_batch_queue(self):
-        self.logging.info(f"Starting idol index batch queue ...")
+        self.logging.info(f"Starting index queue handler")
         batch_sched = sched.scheduler(time.time, time.sleep)
-        batch_sched.enter(self.config.get('batchinterval', 5), 1, self.handle_batch_queue, (batch_sched,))
+        batch_sched.enter(10, 1, self.handle_batch_queue, (batch_sched,))
         batch_sched.run()
 
     def handle_batch_queue(self, scheduler):
@@ -75,31 +82,34 @@ class Service:
         self.index_queues_lock.acquire(True)
         current_time = time.time()
         for query_uuid in self.index_queues:
+            batchsize = sum([_d[3] for _d in self.index_queues[query_uuid]])
             queue_size = len(self.index_queues[query_uuid])
             queue_time = self.index_queues[query_uuid][queue_size-1][0]
-            if queue_size >= self.config.get('batchsize', 100) or (current_time-queue_time) > self.config.get('batchexpire', 30):
+            if batchsize >= self.config.get('batchsize', 100) or (current_time-queue_time) > self.config.get('batchexpire', 30):
                 query = self.index_queues[query_uuid][queue_size-1][1]
-                self.executor.submit(self.post_index_data, query, self.index_queues[query_uuid].copy())
+                self.executor.submit(self.post_index_data, query.copy(), self.index_queues[query_uuid].copy())
                 self.index_queues[query_uuid].clear()
         self.index_queues_lock.release()
-        scheduler.enter(self.config.get('batchinterval', 5), 1, self.handle_batch_queue, (scheduler,))
+        scheduler.enter(10, 1, self.handle_batch_queue, (scheduler,))
 
+    @retry(wait_fixed=2000, stop_max_delay=10000)
     def post_index_data(self, query, docs=[]):
-        index_data = '\n'.join([_d[2] for _d in docs]) + "\n#DREENDDATAREFERENCE\n\n"
-        resp = requests.post(f"{makeUrl(self.config.get('dih'))}/DREADDDATA?{urllib.parse.urlencode(query)}", data=index_data.encode('utf-8'), headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
-        self.logging.info(f"Indexed batch: {resp}")
-        # TODO on error add docs back into the batch queue
+        try:
+            batchsize = sum([_d[3] for _d in docs])
+            index_data = '\n'.join([_d[2] for _d in docs]) + "\n#DREENDDATAREFERENCE\n\n"
+            resp = requests.post(f"{makeUrl(self.config.get('dih'))}/DREADDDATA?{urllib.parse.urlencode(query)}", data=index_data.encode('utf-8'), headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
+            self.logging.info(f"Batch sent [size:{batchsize}, resp:{resp}]")
+        except Exception as error:
+            self.logging.error(f"post_index_data error: {str(error)}, docs:{len(docs)},  query: {query}")
 
-
-    def add_into_batch_queue(self, query, index_data):
+    def add_into_batch_queue(self, query, index_data, batchsize):
         query_uuid = hashDict(query)
         self.index_queues_lock.acquire(True)
         current_time = time.time()
         if query_uuid not in self.index_queues:
-            self.index_queues[query_uuid] = [(current_time, query, index_data)]
+            self.index_queues[query_uuid] = [(current_time, query, index_data, batchsize)]
         else:
-            self.index_queues[query_uuid].append((current_time, query, index_data))
-        self.logging.debug(f"document added to index batch queue, current queue size: {len(self.index_queues[query_uuid])}")
+            self.index_queues[query_uuid].append((current_time, query, index_data, batchsize))
         self.index_queues_lock.release()
 
     def remove_document(self, reference, dbname, priority=0):
@@ -139,7 +149,7 @@ class Service:
 
     @retry(wait_fixed=10000, stop_max_delay=30000)
     def _suggest_on_text(self, query):    
-        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=SuggestOnText&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(query))}", verify=False)    
+        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=SuggestOnText&ResponseFormat=simplejson", data=clearQuery(query), verify=False)    
         return response.json().get('autnresponse', {}).get('responsedata', {}).get('hit', [])
 
     def query(self, query={}):    
@@ -147,7 +157,7 @@ class Service:
 
     @retry(wait_fixed=10000, stop_max_delay=30000)
     def _query(self, query):    
-        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=Query&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(query))}", verify=False)   
+        response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=Query&ResponseFormat=simplejson", data=clearQuery(query), verify=False)   
         hits = response.json().get('autnresponse', {}).get('responsedata', {}).get('hit', [])
         self.logging.debug(f"Idol query results: {len(hits)}") 
         return hits
@@ -166,7 +176,7 @@ class Service:
 
     @retry(wait_fixed=10000, stop_max_delay=30000)
     def _detect_language(self, text):    
-        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=DetectLanguage&ResponseFormat=simplejson&Text={text}", verify=False)   
+        response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=DetectLanguage&ResponseFormat=simplejson", data={'Text':text}, verify=False)   
         response_data = response.json().get('autnresponse', {}).get('responsedata', {})
         language = response_data.get('language', 'GENERAL') if response_data.get('language') != 'UNKNOWN' else 'GENERAL'
         encoding = response_data.get('languageencoding', 'UTF8')
@@ -177,7 +187,8 @@ class Service:
 
     @retry(wait_fixed=10000, stop_max_delay=30000)
     def _summarize_text(self, query):    
-        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=Summarize&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(query))}", verify=False)   
+        #response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=Summarize&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(query))}", verify=False)   
+        response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=Summarize&ResponseFormat=simplejson", data=clearQuery(query), verify=False)  
         response_data = response.json().get('autnresponse', {}).get('responsedata', {})
         return response_data.get('summary', query.get('text', ''))
 
@@ -189,6 +200,7 @@ def makeUrl(component):
 
 
 def clearQuery(query):
+    query = CaseInsensitiveDict(query)
     query.pop('a', None)
     query.pop('action', None)
     query.pop('responseformat', None)

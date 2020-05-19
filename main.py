@@ -22,7 +22,7 @@ srvcfg = {}
 idolService = None
 #executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 with open('config.json') as json_configfile:
-    config = json.load(json_configfile)
+    config = CaseInsensitiveDict(json.load(json_configfile))
     srvcfg = config.get('service',{})
 
 def main():

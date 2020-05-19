@@ -42,7 +42,7 @@ class Service:
             self.schedule_index_tasks(indexTasksSched)
             indexTasksSched.run()
         except Exception as error:
-            self.logging.error(f"start_index - {str(error)}")
+            self.logging.error(f"_start_index - {str(error)}")
             raise error
 
     @retry(wait_fixed=5000, stop_max_delay=defInterval)
@@ -52,7 +52,7 @@ class Service:
             self.schedule_nlp_tasks(nlpTasksSched)
             nlpTasksSched.run()
         except Exception as error:
-            self.logging.error(f"start_nlp - {str(error)}")
+            self.logging.error(f"_start_nlp - {str(error)}")
             raise error
     
     def schedule_nlp_tasks(self, scheduler):
@@ -61,11 +61,11 @@ class Service:
                 if task.get('startrun', False):
                     self.run_nlp_task(task, None)
                 # Start index tasks schedulers
-                self.logging.info(f"Scheduling nlp project task: '{task.get('name')}'")
+                self.logging.debug(f"Scheduling nlp project task: '{task.get('name')}'")
                 scheduler.enter(task.get('interval', defInterval), 1, self.run_nlp_task, (task, scheduler))
         
     def run_nlp_task(self, task, scheduler):
-        self.logging.info(f"Running nlp project '{task.get('name')}' task ...")
+        self.logging.info(f"Running scheduled task'{task.get('name')}' task")
         nlpService = self.nlp.Service(self.logging, self.config, self.idolService)
         # IDOL => Doccano
         nlpService.export_idol_to_doccano(task)
@@ -83,17 +83,15 @@ class Service:
                 if task.get('startrun', False):
                     self.run_index_task(task, None)
                 # Start index tasks schedulers
-                self.logging.info(f"Scheduling index task: '{task.get('name')}'")
+                self.logging.debug(f"Scheduling index task: '{task.get('name')}'")
                 scheduler.enter(task.get('interval', defInterval), 2, self.run_index_task, (task, scheduler))
         
     def run_index_task(self, task, scheduler):
-        self.logging.info(f"Running index task '{task.get('name')}' ...")
+        self.logging.info(f"Running scheduled task '{task.get('name')}'")
         # INDEX RSS FEEDS
         if task.get('type') == 'rss':
             rssService = self.rss.Service(self.logging, task, self.idolService)
-            results = rssService.index_feeds()
-            for _r in results:
-                self.logging.info(_r)
+            _result = rssService.index_feeds()
         # INDEX STOCK SYMBOLS
         elif task.get('type') == 'stock':
             stockService = self.stock.Service(self.logging, task, self.idolService)

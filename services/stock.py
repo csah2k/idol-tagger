@@ -56,6 +56,7 @@ class Service:
             raise error
 
     def index_stocks_symbols(self, exchanges=['US']):
+        self.logging.info(f"Starting STOCK indextask '{self.config.get('name')}'")
         threads = []
         for _e in exchanges: 
             threads.append(self.executor.submit(self.index_stock_symbols, _e))
@@ -63,6 +64,7 @@ class Service:
         for _t in threads:
             _r = _t.result()
             responses.append(_r)   
+        self.logging.info(f"STOCK indextask '{self.config.get('name')}' completed")
         return responses
             
     @retry(wait_fixed=10000, stop_max_delay=90000)
@@ -119,7 +121,13 @@ class Service:
         except Exception as error:
             self.logging.error(f"{response} - {str(error)}")
             raise error
-        
-        response = { 'url': url, 'exchange': exchange, 'count': len(docsToIndex), 'response': (self.idol.index_into_idol(docsToIndex, self.config.get('database')) if len(docsToIndex) > 0 else '') }
-        self.logging.info(response)
-        return response
+
+        query = {
+            'DREDbName': self.config.get('database'),
+            'KillDuplicates': 'REFERENCE',
+            'CreateDatabase': True,
+            'KeepExisting': False,
+            'Priority': 0
+        }
+        self.idol.index_into_idol(docsToIndex, query)
+        return { 'url': url, 'total': len(docsToIndex), 'indexed': len(docsToIndex) }
