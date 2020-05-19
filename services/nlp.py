@@ -7,6 +7,7 @@ import plac
 import random
 import codecs
 import logging
+import dataset
 import datetime
 import concurrent.futures
 from retrying import retry
@@ -31,15 +32,18 @@ class Service:
     logging = None
     config = None
     idol = None
+    db = None
     doccano_client = None
 
     def __init__(self, logging, config, idol): 
         self.logging = logging 
-        self.config = config.get('nlp')
+        self.config = config.get('nlp').copy()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='NlpPool')
         self.idol = idol 
         login = self.config.get('doccano')
         self.doccano_login(login.get('url'), login.get('username'), login.get('password'))
+        self.db = dataset.connect('sqlite:///:memory:') # change to file persistence
+
 
     def doccano_login(self, url, username, password):
         return self.executor.submit(self._doccano_login, url, username, password).result()
@@ -51,6 +55,12 @@ class Service:
         if not r_me.get('is_superuser'):
             self.logging.warn(f"User username is not a super-user!")
         return self.doccano_client
+    
+    def saveDB(self):
+        table = self.db['sometable']
+        table.insert(dict(name='John Doe', age=37))
+        table.insert(dict(name='Jane Doe', age=34, gender='female'))
+        _john = table.find_one(name='John Doe')
 
     def populateProject(self, project):
         project_name = project.get('name').strip()
@@ -83,11 +93,14 @@ class Service:
             for _query in project.get('queries'):
                 query = _query.copy()
                 # filter documents already in this training project
-                fieldText = query.get('fieldtext','')
-                fieldTextFilter = f"NOT EXISTS{{}}:{project.get('datafield')}"
-                if len(fieldText) > 1: fieldText = f"({fieldText}) AND ({fieldTextFilter})"
-                else: fieldText = fieldTextFilter
-                query['fieldtext'] = fieldText  
+                #fieldText = query.get('fieldtext','')
+                #fieldTextFilter = f"NOT EXISTS{{}}:{project.get('datafield')}"
+                #if len(fieldText) > 1: fieldText = f"({fieldText}) AND ({fieldTextFilter})"
+                #else: fieldText = fieldTextFilter
+                #query['fieldtext'] = fieldText  
+                
+
+
                 query['print'] = 'all'
                 docsToMove = []
                 hits = self.idol.query(query)
@@ -173,7 +186,13 @@ class Service:
                     self.logging.warn(f"Can't find reference in idol [doccano:{doccanoDoc.get('id')} -> idol:{reference}]")
         if len(docsToIndex) > 0: 
             # index updated document
-            self.idol.index_into_idol(docsToIndex, project.get('database'), 100)
+            query = {
+                'DREDbName': project.get('database'),
+                'KillDuplicates': 'REFERENCE',
+                'CreateDatabase': True,
+                'Priority': 100
+            }
+            self.idol.index_into_idol(docsToIndex, query)
 
     def load_classifier_data(self, project, limit=100, split=0.8):
         project = self.populateProject(project)

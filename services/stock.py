@@ -20,7 +20,7 @@ class Service:
 
     def __init__(self, logging, config, idol): 
         self.logging = logging
-        self.config = config
+        self.config = config.copy()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='StockPool')
         self.idol = idol 
 
@@ -37,9 +37,9 @@ class Service:
             raise error
 
     def list_exchange_codes(self):
-        return self.executor.submit(self.list_exchange_codes_sync).result()
+        return self.executor.submit(self._list_exchange_codes).result()
 
-    def list_exchange_codes_sync(self):
+    def _list_exchange_codes(self):
         return list(set([_e.get('code', None) for _e in self.get_stock_exchanges() if _e.get('code', None) != None]))   
 
     @retry(wait_fixed=10000, stop_max_delay=90000)
@@ -56,7 +56,7 @@ class Service:
             raise error
 
     def index_stocks_symbols(self, exchanges=['US']):
-        self.logging.info(f"Starting STOCK indextask '{self.config.get('name')}'")
+        self.logging.info(f"==== Starting ====>  STOCK indextask '{self.config.get('name')}'")
         threads = []
         for _e in exchanges: 
             threads.append(self.executor.submit(self.index_stock_symbols, _e))
@@ -85,13 +85,11 @@ class Service:
                     _p = self.get_symbol_profile(_s.get('symbol'))
                 except Exception as error:
                     self.logging.error(f"{error}")
-
                 self.logging.info(_p)
 
                 shares = float(_p.get('shareOutstanding', 0))
                 capitl = float(_p.get('marketCapitalization', 0))
                 price =  (capitl / shares) if capitl > 0 and shares > 0 else 0
-
 
                 # TODO use the idol webconnector to retrieve contents from the 'weburl' then index its bests concepts
                 docsToIndex.append({

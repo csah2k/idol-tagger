@@ -21,7 +21,7 @@ class Service:
 
     def __init__(self, logging, config): 
         self.logging = logging
-        self.config = config.get('idol')
+        self.config = config.get('idol').copy()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='IdolPool')
         self.index_queues_lock = threading.Lock()
         concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='IdolScheduler').submit(self.init_batch_queue)
@@ -85,7 +85,7 @@ class Service:
             batchsize = sum([_d[3] for _d in self.index_queues[query_uuid]])
             queue_size = len(self.index_queues[query_uuid])
             queue_time = self.index_queues[query_uuid][queue_size-1][0]
-            if batchsize >= self.config.get('batchsize', 100) or (current_time-queue_time) > self.config.get('batchexpire', 30):
+            if batchsize >= self.config.get('batchsize', 100) or (current_time-queue_time) > 30:
                 query = self.index_queues[query_uuid][queue_size-1][1]
                 self.executor.submit(self.post_index_data, query.copy(), self.index_queues[query_uuid].copy())
                 self.index_queues[query_uuid].clear()
@@ -98,7 +98,7 @@ class Service:
             batchsize = sum([_d[3] for _d in docs])
             index_data = '\n'.join([_d[2] for _d in docs]) + "\n#DREENDDATAREFERENCE\n\n"
             resp = requests.post(f"{makeUrl(self.config.get('dih'))}/DREADDDATA?{urllib.parse.urlencode(query)}", data=index_data.encode('utf-8'), headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
-            self.logging.info(f"Batch sent [size:{batchsize}, resp:{resp}]")
+            self.logging.info(f"Batch sent [docs:{batchsize}, resp:{resp}]")
         except Exception as error:
             self.logging.error(f"post_index_data error: {str(error)}, docs:{len(docs)},  query: {query}")
 
@@ -110,6 +110,7 @@ class Service:
             self.index_queues[query_uuid] = [(current_time, query, index_data, batchsize)]
         else:
             self.index_queues[query_uuid].append((current_time, query, index_data, batchsize))
+        #self.logging.info(f"add_into_batch_queue: {batchsize}, queue size: {len(self.index_queues[query_uuid])}")
         self.index_queues_lock.release()
 
     def remove_document(self, reference, dbname, priority=0):

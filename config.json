@@ -26,7 +26,7 @@
         "projects": [
             {
                 "name": "sentiment",
-                "enabled": false,
+                "enabled": true,
                 "startrun": false,
                 "interval": 30,
                 "textfield": "TITLE",
@@ -62,8 +62,8 @@
             "name": "Feeds de noticias",
             "type": "rss",
             "enabled": true,
-            "startrun": true,
-            "interval": 600,
+            "startrun": false,
+            "interval": 86400,
             "threads": 20,
             "database": "RSS_FEEDS",
             "feeds": "data/feeds.rss",

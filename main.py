@@ -20,7 +20,7 @@ logfile='main.log'
 config = {}
 srvcfg = {}
 idolService = None
-#executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+# TODO maybe use TynyDb for the configs implementation https://pypi.org/project/tinydb/
 with open('config.json') as json_configfile:
     config = CaseInsensitiveDict(json.load(json_configfile))
     srvcfg = config.get('service',{})
@@ -32,10 +32,8 @@ def main():
 
     idolService = idol.Service(logging, config)
     schedService = sched.Service(logging, config, idolService, nlp, rss, stock)
-
-    while True:
-        time.sleep(1)
-        logging.debug(schedService.statistics())
+    schedService.start()
+    
 
     
 def getLogLvl(cfg):
