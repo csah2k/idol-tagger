@@ -1,37 +1,37 @@
 from __future__ import unicode_literals, print_function
 
 import sys
-import plac
-import time
 import json
 import logging
 import services.idol as idol
-import services.stock as stock
 import services.rss as rss
-import services.nlp as nlp
+import services.stock as stock
+import services.doccano as doccano
 import services.scheduler as sched
 from requests.structures import CaseInsensitiveDict
 
-# TODO - add twitter source
-# https://python-twitter.readthedocs.io/en/latest/getting_started.html
+# TODO - add twitter source   https://python-twitter.readthedocs.io/en/latest/getting_started.html
+# TODO - do some asserts in configuration and maybe use TynyDb for the implementation  https://pypi.org/project/tinydb/ 
+# TODO - add metafields manual addition in index tasks configuration
 
-sys.path.insert(0, './services')
+
 logfile='main.log'
 config = {}
 srvcfg = {}
 idolService = None
-# TODO maybe use TynyDb for the configs implementation https://pypi.org/project/tinydb/
+
 with open('config.json') as json_configfile:
     config = CaseInsensitiveDict(json.load(json_configfile))
     srvcfg = config.get('service',{})
 
 def main():
     logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=getLogLvl(srvcfg), handlers=[logging.FileHandler(srvcfg.get('logfile', logfile), 'w', 'utf-8')])
-    logging.info("==============> Starting service")
+    logging.info("============================ Starting  ============================")
     logging.info(srvcfg)
-
+    logging.debug(config)
+    
     idolService = idol.Service(logging, config)
-    schedService = sched.Service(logging, config, idolService, nlp, rss, stock)
+    schedService = sched.Service(logging, config, idolService, doccano, rss, stock)
     schedService.start()
     
 
@@ -47,6 +47,6 @@ def getLogLvl(cfg):
     return loglvl
 
 
-
 if __name__ == "__main__":
-    plac.call(main)
+    #plac.call(main)
+    main()

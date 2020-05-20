@@ -30,7 +30,7 @@ class Service:
         self.executor.submit(self._index_into_idol, documents, query)
 
     def _index_into_idol(self, documents, query):
-        query = CaseInsensitiveDict(query.copy())
+        _query = CaseInsensitiveDict(query.copy())    
         index_data = ''
         for _d in documents:
             fields = _d.get('fields', [])
@@ -52,15 +52,16 @@ class Service:
             f"{content}",
             "#DREENDDOC\n\n"])
         # add to queue
-        if query.get('priority', 0) >= 100: # bypass queue
-            self.post_index_data(query, [(None, query, index_data, len(documents))])
+        if _query.get('priority', 0) >= 100: # bypass queue
+            self.post_index_data(_query, [(None, _query, index_data, len(documents))])
         else:
-            self.add_into_batch_queue(query, index_data, len(documents))
+            self.add_into_batch_queue(_query, index_data, len(documents))
 
     def set_field_value(self, references, field, value, query={}):
         self.executor.submit(self._set_field_value, references, field, value, query)
 
     def _set_field_value(self, references, field, value, query={}):
+        _query = CaseInsensitiveDict(query.copy()) 
         index_data = ''
         for reference in references:
             index_data += '\n'.join([
@@ -68,7 +69,7 @@ class Service:
                 f"#DREFIELDNAME {field}",
                 f"#DREFIELDVALUE {value}"])
         index_data += "\n#DREENDDATAREFERENCE\n\n"
-        resp = requests.post(f"{makeUrl(self.config.get('dih'))}/DREREPLACE?{urllib.parse.urlencode(query)}", data=index_data.encode('utf-8'), headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
+        resp = requests.post(f"{makeUrl(self.config.get('dih'))}/DREREPLACE?{urllib.parse.urlencode(_query)}", data=index_data.encode('utf-8'), headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
         self.logging.info(f"set_field_value: {resp}")
 
     def init_batch_queue(self):
@@ -92,13 +93,13 @@ class Service:
         self.index_queues_lock.release()
         scheduler.enter(10, 1, self.handle_batch_queue, (scheduler,))
 
-    @retry(wait_fixed=2000, stop_max_delay=10000)
+    @retry(wait_fixed=2000, stop_max_delay=60000)
     def post_index_data(self, query, docs=[]):
         try:
             batchsize = sum([_d[3] for _d in docs])
             index_data = '\n'.join([_d[2] for _d in docs]) + "\n#DREENDDATAREFERENCE\n\n"
             resp = requests.post(f"{makeUrl(self.config.get('dih'))}/DREADDDATA?{urllib.parse.urlencode(query)}", data=index_data.encode('utf-8'), headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
-            self.logging.info(f"Batch sent [docs:{batchsize}, resp:{resp}]")
+            self.logging.info(f"Batch sent [docs:{batchsize}, resp:{resp}, pri:{query.get('priority',0)}]")
         except Exception as error:
             self.logging.error(f"post_index_data error: {str(error)}, docs:{len(docs)},  query: {query}")
 
@@ -149,26 +150,46 @@ class Service:
         return self.executor.submit(self._suggest_on_text, query).result()
 
     @retry(wait_fixed=10000, stop_max_delay=30000)
-    def _suggest_on_text(self, query):    
-        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=SuggestOnText&ResponseFormat=simplejson", data=clearQuery(query), verify=False)    
+    def _suggest_on_text(self, query): 
+        _query = CaseInsensitiveDict(query.copy())    
+        response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=SuggestOnText&ResponseFormat=simplejson", data=clearQuery(_query), verify=False)    
         return response.json().get('autnresponse', {}).get('responsedata', {}).get('hit', [])
 
     def query(self, query={}):    
         return self.executor.submit(self._query, query).result()
 
     @retry(wait_fixed=10000, stop_max_delay=30000)
-    def _query(self, query):    
-        response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=Query&ResponseFormat=simplejson", data=clearQuery(query), verify=False)   
+    def _query(self, query): 
+        _query = CaseInsensitiveDict(query.copy())   
+        response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=Query&ResponseFormat=simplejson", data=clearQuery(_query), verify=False)   
         hits = response.json().get('autnresponse', {}).get('responsedata', {}).get('hit', [])
         self.logging.debug(f"Idol query results: {len(hits)}") 
         return hits
+
+    def get_statetoken(self, query={}):    
+        return self.executor.submit(self._get_statetoken, query).result()
+
+    @retry(wait_fixed=10000, stop_max_delay=30000)
+    def _get_statetoken(self, query):    
+        _query = CaseInsensitiveDict(query.copy())
+        _query.update({
+            'Print': 'NoResults',
+            'StoreState': True,
+            'StoredStateField': 'DREREFERENCE',
+            'StoredStateTokenLifetime': 600
+        })
+        response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=Query&ResponseFormat=simplejson", data=clearQuery(_query), verify=False)   
+        statetokeid = response.json().get('autnresponse', {}).get('responsedata', {}).get('state', '')
+        self.logging.debug(f"Idol statetoke id: {statetokeid}") 
+        return statetokeid
 
     def get_content(self, query={}):    
         return self.executor.submit(self._get_content, query).result()
 
     @retry(wait_fixed=10000, stop_max_delay=30000)
-    def _get_content(self, query):    
-        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=GetContent&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(query))}", verify=False)   
+    def _get_content(self, query):
+        _query = CaseInsensitiveDict(query.copy())
+        response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=GetContent&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(_query))}", verify=False)   
         hits = response.json().get('autnresponse', {}).get('responsedata', {}).get('hit', [])
         return hits[0] if len(hits) > 0 else None
 
@@ -188,20 +209,17 @@ class Service:
 
     @retry(wait_fixed=10000, stop_max_delay=30000)
     def _summarize_text(self, query):    
-        #response = requests.get(f"{makeUrl(self.config.get('dah'))}/a=Summarize&ResponseFormat=simplejson&{urllib.parse.urlencode(clearQuery(query))}", verify=False)   
-        response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=Summarize&ResponseFormat=simplejson", data=clearQuery(query), verify=False)  
+        _query = CaseInsensitiveDict(query.copy())
+        response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=Summarize&ResponseFormat=simplejson", data=clearQuery(_query), verify=False)  
         response_data = response.json().get('autnresponse', {}).get('responsedata', {})
         return response_data.get('summary', query.get('text', ''))
 
 
 ## --------- helper functions ------------
-
 def makeUrl(component):
     return f"{component.get('protocol','http')}://{component.get('host','localhost')}:{component.get('port',9000)}"
 
-
 def clearQuery(query):
-    query = CaseInsensitiveDict(query)
     query.pop('a', None)
     query.pop('action', None)
     query.pop('responseformat', None)

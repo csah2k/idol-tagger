@@ -1,0 +1,60 @@
+#DREREFERENCE target_person_01
+#DREFIELD TITLE="Cassio Schulte Agnelli"
+#DREFIELD AGENT_BOOL="Cassio DNEAR (Schulte WNEAR Agnelli)"
+#DREFIELD LANGUAGE="generalUTF8"
+#DRECONTENT
+Cassio Schulte Agnelli
+#DREENDDOC
+
+#DREREFERENCE target_person_02
+#DREFIELD TITLE="Jair Messias Bolsonaro"
+#DREFIELD AGENT_BOOL="(Jair DNEAR Messias) WNEAR Bolsonaro"
+#DREFIELD LANGUAGE="generalUTF8"
+#DRECONTENT
+Jair Messias Bolsonaro
+#DREENDDOC
+
+#DREREFERENCE target_person_03
+#DREFIELD TITLE="Luis Inacio Lula da Silva"
+#DREFIELD AGENT_BOOL="Lula OR (Luis DNEAR Inacio)"
+#DREFIELD LANGUAGE="generalUTF8"
+#DRECONTENT
+Luis Inacio Lula da Silva
+#DREENDDOC
+
+#DREREFERENCE target_topic_03
+#DREFIELD TITLE="Corona Virus"
+#DREFIELD AGENT_BOOL="(corona OR cov OR covid) WNEAR (19 OR virus)"
+#DREFIELD LANGUAGE="generalUTF8"
+#DRECONTENT
+Corona Virus covid cov19 cov-19
+#DREENDDOC
+
+#DREREFERENCE target_topic_04
+#DREFIELD TITLE="Quarentena (Lockdown)"
+#DREFIELD AGENT_BOOL="lockdown OR quarentena"
+#DREFIELD LANGUAGE="generalUTF8"
+#DRECONTENT
+Quarentena Lockdown
+#DREENDDOC
+
+#DREREFERENCE target_topic_05
+#DREFIELD TITLE="Rede Globo de Televisão"
+#DREFIELD AGENT_BOOL="(rede DNEAR (globo OR bobo)) OR (globo DNEAR lixo)"
+#DREFIELD LANGUAGE="generalUTF8"
+#DRECONTENT
+Rede Globo Lixo Bobo de Televisão
+#DREENDDOC
+
+#DREREFERENCE target_topic_06
+#DREFIELD TITLE="China"
+#DREFIELD LANGUAGE="generalUTF8"
+#DRECONTENT
+China Jinping chinês RPC PCC CHN 
+Xinjiang Mongólia Tibete Ningxia Guangxi Pequim Tianjin Xangai Chongqing Hong Kong Macau Pequim
+Gobi Taklamakan Mandarim 
+Zhōngguó Zhonghua Shujing
+#DREENDDOC
+
+
+#DREENDDATA

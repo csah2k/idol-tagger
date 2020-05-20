@@ -14,21 +14,20 @@
             "port": 9101
         }
     },
-    "nlp":{
-        "enabled": true, 
-        "threads": 2,
+    "doccano":{
         "tempfolder": "data",
-        "doccano":{
-            "url": "http://localhost:8000",
+        "url": "http://localhost:8000",
+        "login":{
             "username": "admin",
             "password": "password"
         },
         "projects": [
             {
-                "name": "sentiment",
+                "name": "china_news/title_sentiment",
                 "enabled": true,
-                "startrun": false,
-                "interval": 30,
+                "startrun": true,
+                "interval": 300,
+                "maxremaining": 200,
                 "textfield": "TITLE",
                 "datafield": "NLP_SENTIMENT",
                 "database": "TRAINING_SENTIMENT",
@@ -37,7 +36,13 @@
                         "DatabaseMatch": "RSS_FEEDS",
                         "AnyLanguage": true,
                         "MaxResults": 10,
-                        "Text": "*"
+                        "Text": "china"
+                    },
+                    {
+                        "DatabaseMatch": "RSS_FEEDS",
+                        "AnyLanguage": true,
+                        "MaxResults": 10,
+                        "Text": "covid"
                     }
                 ]
             }
