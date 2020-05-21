@@ -1,7 +1,6 @@
 
 
 import time
-import sched
 import urllib
 import logging
 import requests
@@ -13,22 +12,46 @@ filters_fieldprefix = 'FILTERINDEX'
 
 class Service:
 
-    executor = None
-    logging = None
-    config = None    
-    index_queues = {}
-    index_queues_lock = None
-
     def __init__(self, logging, config): 
         self.logging = logging
         self.config = config.get('idol').copy()
+        self.lock = threading.Lock()
+        self.index_queues = {}
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='IdolPool')
-        self.index_queues_lock = threading.Lock()
-        concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='IdolScheduler').submit(self.init_batch_queue)
+        self.executor.submit(self.init_batch_queue)
+    
+    def handle_batch_queue(self):
+        self.lock.acquire()
+        try:
+            current_time = time.time()
+            for query_uuid in self.index_queues:
+                batchsize = sum([_d[3] for _d in self.index_queues[query_uuid]])
+                queue_size = len(self.index_queues[query_uuid])
+                queue_time = self.index_queues[query_uuid][queue_size-1][0]
+                if batchsize >= self.config.get('batchsize', 100) or (current_time-queue_time) > 30:
+                    query = self.index_queues[query_uuid][queue_size-1][1]
+                    self.executor.submit(self.post_index_data, query.copy(), self.index_queues[query_uuid].copy())
+                    self.index_queues[query_uuid].clear()
+        finally:
+            self.lock.release()
+            
+    def add_into_batch_queue(self, query, index_data, batchsize):
+        self.lock.acquire()
+        try:
+            query_uuid = hashDict(query)
+            current_time = time.time()
+            if query_uuid not in self.index_queues:
+                self.index_queues[query_uuid] = [(current_time, query, index_data, batchsize)]
+            else:
+                self.index_queues[query_uuid].append((current_time, query, index_data, batchsize))
+            self.logging.debug(f"add_into_batch_queue: {batchsize}, queue batches: {len(self.index_queues[query_uuid])}")
+        finally:
+            self.lock.release()
 
     def index_into_idol(self, documents, query):
         self.executor.submit(self._index_into_idol, documents, query)
 
+    @retry(wait_fixed=1000, stop_max_delay=10000)
     def _index_into_idol(self, documents, query):
         _query = CaseInsensitiveDict(query.copy())    
         index_data = ''
@@ -72,27 +95,6 @@ class Service:
         resp = requests.post(f"{makeUrl(self.config.get('dih'))}/DREREPLACE?{urllib.parse.urlencode(_query)}", data=index_data.encode('utf-8'), headers={'Content-type': 'text/plain; charset=utf-8'}, verify=False).text.strip()
         self.logging.info(f"set_field_value: {resp}")
 
-    def init_batch_queue(self):
-        self.logging.info(f"Starting index queue handler")
-        batch_sched = sched.scheduler(time.time, time.sleep)
-        batch_sched.enter(10, 1, self.handle_batch_queue, (batch_sched,))
-        batch_sched.run()
-
-    def handle_batch_queue(self, scheduler):
-        # index batch if full or expired
-        self.index_queues_lock.acquire(True)
-        current_time = time.time()
-        for query_uuid in self.index_queues:
-            batchsize = sum([_d[3] for _d in self.index_queues[query_uuid]])
-            queue_size = len(self.index_queues[query_uuid])
-            queue_time = self.index_queues[query_uuid][queue_size-1][0]
-            if batchsize >= self.config.get('batchsize', 100) or (current_time-queue_time) > 30:
-                query = self.index_queues[query_uuid][queue_size-1][1]
-                self.executor.submit(self.post_index_data, query.copy(), self.index_queues[query_uuid].copy())
-                self.index_queues[query_uuid].clear()
-        self.index_queues_lock.release()
-        scheduler.enter(10, 1, self.handle_batch_queue, (scheduler,))
-
     @retry(wait_fixed=2000, stop_max_delay=60000)
     def post_index_data(self, query, docs=[]):
         try:
@@ -102,17 +104,6 @@ class Service:
             self.logging.info(f"Batch sent [docs:{batchsize}, resp:{resp}, pri:{query.get('priority',0)}]")
         except Exception as error:
             self.logging.error(f"post_index_data error: {str(error)}, docs:{len(docs)},  query: {query}")
-
-    def add_into_batch_queue(self, query, index_data, batchsize):
-        query_uuid = hashDict(query)
-        self.index_queues_lock.acquire(True)
-        current_time = time.time()
-        if query_uuid not in self.index_queues:
-            self.index_queues[query_uuid] = [(current_time, query, index_data, batchsize)]
-        else:
-            self.index_queues[query_uuid].append((current_time, query, index_data, batchsize))
-        #self.logging.info(f"add_into_batch_queue: {batchsize}, queue size: {len(self.index_queues[query_uuid])}")
-        self.index_queues_lock.release()
 
     def remove_document(self, reference, dbname, priority=0):
         return self.executor.submit(self._remove_document, reference, dbname, priority)
@@ -213,6 +204,12 @@ class Service:
         response = requests.post(f"{makeUrl(self.config.get('dah'))}/a=Summarize&ResponseFormat=simplejson", data=clearQuery(_query), verify=False)  
         response_data = response.json().get('autnresponse', {}).get('responsedata', {})
         return response_data.get('summary', query.get('text', ''))
+
+    @retry(wait_fixed=10000)
+    def init_batch_queue(self):
+        self.logging.debug(f"Starting index queue handler")
+        self.handle_batch_queue()    
+        raise Exception('sleeping') # :(
 
 
 ## --------- helper functions ------------

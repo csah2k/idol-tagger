@@ -3,10 +3,12 @@ import os
 import json
 import codecs
 import logging
+import datetime
 import concurrent.futures
 from doccano_api_client import DoccanoClient
 from requests.structures import CaseInsensitiveDict
 filters_fieldprefix = 'FILTERINDEX'
+tagged_fieldsufix = '_TAGGED'
 
 # https://github.com/doccano/doccano
 # https://github.com/afparsons/doccano_api_client
@@ -56,7 +58,7 @@ class Service:
 
     def _sync_idol_with_doccano(self, project):
         self.logging.info(f"==== Synchronizing Idol/Doccano ====> '{project.get('name')}'")
-        _project = self.populateProject(project)
+        _project = self.populateProject(project) # get project ID and other things
         if _project == None: return
         # IDOL => Doccano
         self.export_idol_to_doccano(_project)
@@ -116,16 +118,16 @@ class Service:
                         jsonl = json.dumps({'text': text, 'labels': labels, 'meta': meta}, ensure_ascii=False).encode('utf8')
                         outfile.write(jsonl.decode()+'\n')
                         docsToMove.append(hit)
-                # MOVE the selected docs to a staging database
-                if len(docsToMove) > 0: 
-                    query = {
-                        'DREDbName': project.get('database'),
-                        'KillDuplicates': 'REFERENCE', ## check for the same reference ONLY in 'DREDbName' database
-                        'CreateDatabase': True,
-                        'KeepExisting': True, ## do not replace content for matched references in KillDuplicates
-                        'Priority': 100
-                    }
-                    self.idol.index_into_idol(docsToMove, query)
+        # MOVE the selected docs to a staging database
+        if len(docsToMove) > 0: 
+            query = {
+                'DREDbName': project.get('database'),
+                'KillDuplicates': 'REFERENCE', ## check for the same reference ONLY in 'DREDbName' database
+                'CreateDatabase': True,
+                'KeepExisting': True, ## do not replace content for matched references in KillDuplicates
+                'Priority': 100
+            }
+            self.idol.index_into_idol(docsToMove, query)
         return len(docsToMove)
                 
     def import_training_into_doccano(self, project):
@@ -144,6 +146,7 @@ class Service:
 
     def export_doccano_to_idol(self, project):
         project = self.populateProject(project)
+        date = datetime.datetime.now().isoformat()
         resp = self.doccano_client.get_doc_download(project.get('id'), 'json')
         docsToIndex = []
         for line in resp.text.splitlines():
@@ -165,6 +168,7 @@ class Service:
                     # update fields
                     idolDoc['content']['DOCUMENT'][0][project.get('textfield')] = [text]
                     idolDoc['content']['DOCUMENT'][0][project.get('datafield')] = [labels.decode()]                
+                    idolDoc['content']['DOCUMENT'][0][project.get('datafield')+tagged_fieldsufix] = [date]
                     docsToIndex.append(idolDoc)
                     self.doccano_client.delete_document(project.get('id'), doccanoDoc.get('id'))
                 else:

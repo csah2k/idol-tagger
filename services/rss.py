@@ -29,6 +29,7 @@ class Service:
 
     def index_feeds(self, max_feeds=0):
         self.executor.submit(self._index_feeds, max_feeds).result()
+        self.executor.shutdown()
         
     def _index_feeds(self, max_feeds=0):
         self.logging.info(f"==== Starting ====>  RSS indextask '{self.config.get('name')}'")
@@ -47,7 +48,7 @@ class Service:
         if max_feeds <= 0: max_feeds = len(feeds_urls)
         feeds_urls = feeds_urls[:max_feeds]
         self.logging.info(f"Crawling {len(feeds_urls)} urls using {self.config.get('threads', 2)} threads")
-
+       
         index_threads = []
         for _url in feeds_urls:
             index_threads.append(
@@ -75,6 +76,7 @@ class Service:
             return { 'url': feed_url, 'error': str(error) }
 
     def _index_feed(self, feed_url, feed):      
+        self.logging.debug(f"_index_feed: '{feed_url}'")
         docsToIndex = []
         for _e in feed.entries:
             link = None

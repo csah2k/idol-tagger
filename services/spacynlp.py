@@ -4,11 +4,14 @@ import os
 import json
 import random
 import logging
+import dataset
 import concurrent.futures
 from pathlib import Path
 import spacy
 from spacy.util import minibatch, compounding
 from requests.structures import CaseInsensitiveDict
+tagged_fieldsufix = '_TAGGED'
+trained_fieldsufix = '_TRAINED'
 
 # https://spacy.io/api
 
@@ -19,14 +22,12 @@ class Service:
     logging = None
     config = None
     idol = None
-    #db = None
 
     def __init__(self, logging, config, idol): 
         self.logging = logging 
-        self.config = config.get('doccano').copy()
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='DoccanoPool')
+        self.config = config.get('spacynlp').copy()
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='SpacyPool')
         self.idol = idol 
-        #self.db = dataset.connect('sqlite:///:memory:') # change to file persistence??
 
     '''
     def saveDB(self):
@@ -35,12 +36,24 @@ class Service:
         table.insert(dict(name='Jane Doe', age=34, gender='female'))
         _john = table.find_one(name='John Doe')
     '''
+
+    def openProjectDB(self, project):
+        dbfile = self.getDataFilename(project, 'sqlite', 'db')
+        return dataset.connect(f'sqlite:///{dbfile}')
     
     def train_model_classifier(self, project, model=None, output_dir=None, n_iter=20, n_texts=2000, init_tok2vec=None):  
         return self.executor.submit(self._train_model_classifier, project, model, output_dir, n_iter, n_texts, init_tok2vec)
 
     def _train_model_classifier(self, project, model=None, output_dir=None, n_iter=20, n_texts=2000, init_tok2vec=None):  
         self.logging.info(f"==== Training model ====>  ({project.get('name')})")  
+        _project = self.populateProject(project)
+        db = openProjectDB(_project)
+
+        runtimes = getProjectLastRuntime(_project, db)
+        for row in runtimes:
+            print(f"runtime: {row['runtime']}")
+
+
         if model is not None:
             self.logging.info("Loading model '%s'" % model)
             nlp = spacy.load(model)  # load existing spaCy model
@@ -59,7 +72,7 @@ class Service:
 
         # load correct dataset from IDOL
         self.logging.info("Loading classifier data...")
-        (train_texts, train_cats), (dev_texts, dev_cats), categories = self.load_classifier_data(project)
+        (train_texts, train_cats), (dev_texts, dev_cats), categories = self.load_classifier_data(_project, db)
         if len(categories) == 0 or len(train_texts) == 0:
             self.logging.info("No new training data found in idol")
             return
@@ -124,13 +137,13 @@ class Service:
             doc2 = nlp2(test_text)
             self.logging.info(test_text, doc2.cats)
                 
-    def load_classifier_data(self, project, limit=100, split=0.8):
-        project = self.populateProject(project)
+    def load_classifier_data(self, project, db, limit=100, split=0.8):
         train_data = []
         # query documents from this project database in IDOL
         query = {
             'DatabaseMatch': project.get('database'),
-            'FieldText': f"TERM{{label}}:{project.get('datafield')}",
+            #'FieldText': f"TERM{{label}}:{project.get('datafield')}",
+            'FieldText': f"{{{lastruntime}}}:{project.get('datafield')+tagged_fieldsufix}",
             'PrintFields': f"{project.get('datafield')},{project.get('textfield')}",
             'AnyLanguage': True, ## TODO run this 'load_classifier_data' and 'train_model_classifier' for each existing LANGUAGE values
             'MaxResults': limit,
@@ -288,7 +301,7 @@ class Service:
         os.makedirs(target_folder, exist_ok=True)
         if trunc: open(target_file, 'w').close()
         if delt and os.path.exists(target_file): os.remove(target_file)
-        return target_file, target_folder, os.path.basename(target_file)
+        return target_file #, target_folder, os.path.basename(target_file)
 
 ## --------- helper functions ------------
 def getDocLink(doc):
@@ -297,13 +310,8 @@ def getDocLink(doc):
 def getDocDate(doc):
     return doc.get('DATE', doc.get('DREDATE', doc.get('TIMESTAMP', [''] )))[0]   
 
-def getDocFilters(doc):
-    #references = doc.get(f'{filters_fieldprefix}_REFS', [])
-    #dbname = doc.get(f'{filters_fieldprefix}_DBS', [])
-    links = doc.get(f'{filters_fieldprefix}_LNKS', [])
-    prefix = filters_fieldprefix.lower()
-    return {
-        #f'{prefix}_databases': ','.join(dbname),
-        #f'{prefix}_references': ','.join(references),
-        f'{prefix}_links': ','.join(links)
-    }
+def getProjectLastRuntime(project, db):
+    table = db['executions']
+    return table.find(order_by='-runtime', _limit=1)
+    #for row in results:
+    #    print(f"row['runtime']")

@@ -14,6 +14,22 @@
             "port": 9101
         }
     },
+    "spacynlp":{
+        "languages":{
+            "ENGLISHUTF8" : "en_core_web_sm",
+            "PORTUGUESEUTF8": "pt_core_news_sm",
+            "GENERALUTF8": "xx_ent_wiki_sm"
+        },
+        "tasks": [
+            {
+                "name": "China News Title Sentiment Training",
+                "project": "china_news/title_sentiment",
+                "enabled": false,
+                "startrun": true,
+                "interval": 3600
+            }
+        ]
+    },
     "doccano":{
         "tempfolder": "data",
         "url": "http://localhost:8000",
@@ -25,9 +41,9 @@
             {
                 "name": "china_news/title_sentiment",
                 "enabled": true,
-                "startrun": true,
-                "interval": 300,
-                "maxremaining": 200,
+                "startrun": false,
+                "interval": 30,
+                "maxremaining": 300,
                 "textfield": "TITLE",
                 "datafield": "NLP_SENTIMENT",
                 "database": "TRAINING_SENTIMENT",
@@ -35,13 +51,13 @@
                     {
                         "DatabaseMatch": "RSS_FEEDS",
                         "AnyLanguage": true,
-                        "MaxResults": 10,
+                        "MaxResults": 1,
                         "Text": "china"
                     },
                     {
                         "DatabaseMatch": "RSS_FEEDS",
                         "AnyLanguage": true,
-                        "MaxResults": 10,
+                        "MaxResults": 1,
                         "Text": "covid"
                     }
                 ]
@@ -67,8 +83,8 @@
             "name": "Feeds de noticias",
             "type": "rss",
             "enabled": true,
-            "startrun": false,
-            "interval": 86400,
+            "startrun": true,
+            "interval": 60,
             "threads": 20,
             "database": "RSS_FEEDS",
             "feeds": "data/feeds.rss",

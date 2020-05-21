@@ -1,6 +1,7 @@
 from __future__ import unicode_literals, print_function
 
 import sys
+import time
 import json
 import logging
 import services.idol as idol
@@ -10,8 +11,14 @@ import services.doccano as doccano
 import services.scheduler as sched
 from requests.structures import CaseInsensitiveDict
 
-# TODO - add twitter source   https://python-twitter.readthedocs.io/en/latest/getting_started.html
-# TODO - do some asserts in configuration and maybe use TynyDb for the implementation  https://pypi.org/project/tinydb/ 
+
+# TODO - add twitter source   
+# https://python-twitter.readthedocs.io/en/latest/getting_started.html
+
+# TODO - do some asserts in configuration, trim all values, and maybe use dataset or TynyDb   
+# https://pypi.org/project/tinydb/ 
+# https://dataset.readthedocs.io/en/latest/quickstart.html#connecting-to-a-database
+
 # TODO - add metafields manual addition in index tasks configuration
 
 
@@ -30,9 +37,15 @@ def main():
     logging.info(srvcfg)
     logging.debug(config)
     
-    idolService = idol.Service(logging, config)
-    schedService = sched.Service(logging, config, idolService, doccano, rss, stock)
+    #idolService = idol.Service(logging, config)
+    schedService = sched.Service(logging, config)
+
     schedService.start()
+    while True:
+        logging.info("Collecting statistics...")
+        _statistics = schedService.statistics()
+        # TODO save the statistics in dataset db file
+        time.sleep(30)
     
 
     
@@ -50,3 +63,5 @@ def getLogLvl(cfg):
 if __name__ == "__main__":
     #plac.call(main)
     main()
+
+    
