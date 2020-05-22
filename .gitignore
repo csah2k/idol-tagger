@@ -2,6 +2,7 @@
 *.tmp
 src/doccano_api_client
 src/doccano
+index/elastic
 __pycache__/
 *.py[cod]
 *.so

@@ -1,7 +1,8 @@
 {
     "service":{
         "logfile": "service.log",
-        "loglevel": "INFO"
+        "loglevel": "INFO",
+        "index": "elastic"
     },
     "idol": {
         "threads": 18,
@@ -12,6 +13,13 @@
         "dih": {
             "host": "localhost",
             "port": 9101
+        }
+    },
+    "elastic": {
+        "url": "http://localhost:9200",
+        "login":{
+            "username": "admin",
+            "password": "password"
         }
     },
     "spacynlp":{
