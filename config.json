@@ -22,8 +22,7 @@
         },
         "tasks": [
             {
-                "name": "China News Title Sentiment Training",
-                "project": "china_news/title_sentiment",
+                "project": "polical_agent",
                 "enabled": false,
                 "startrun": true,
                 "interval": 3600
@@ -39,26 +38,20 @@
         },
         "projects": [
             {
-                "name": "china_news/title_sentiment",
+                "name": "polical_agent",
                 "enabled": true,
                 "startrun": false,
-                "interval": 30,
-                "maxremaining": 300,
-                "textfield": "TITLE",
+                "interval": 600,
+                "maxremaining": 500,
+                "textfield": "DRECONTENT",
                 "datafield": "NLP_SENTIMENT",
                 "database": "TRAINING_SENTIMENT",
                 "queries": [
                     {
                         "DatabaseMatch": "RSS_FEEDS",
                         "AnyLanguage": true,
-                        "MaxResults": 1,
-                        "Text": "china"
-                    },
-                    {
-                        "DatabaseMatch": "RSS_FEEDS",
-                        "AnyLanguage": true,
-                        "MaxResults": 1,
-                        "Text": "covid"
+                        "MaxResults": 2,
+                        "Text": "*"
                     }
                 ]
             }
@@ -82,9 +75,9 @@
         {
             "name": "Feeds de noticias",
             "type": "rss",
-            "enabled": true,
-            "startrun": true,
-            "interval": 60,
+            "enabled": false,
+            "startrun": false,
+            "interval": 3600,
             "threads": 20,
             "database": "RSS_FEEDS",
             "feeds": "data/feeds.rss",

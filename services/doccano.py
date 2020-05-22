@@ -4,27 +4,24 @@ import json
 import codecs
 import logging
 import datetime
+import itertools
+import operator
 import concurrent.futures
+from retrying import retry
 from doccano_api_client import DoccanoClient
 from requests.structures import CaseInsensitiveDict
-filters_fieldprefix = 'FILTERINDEX'
-tagged_fieldsufix = '_TAGGED'
+
+import services.utils as util
 
 # https://github.com/doccano/doccano
 # https://github.com/afparsons/doccano_api_client
 
 class Service:
 
-    doccano_client = None
-    executor = None
-    logging = None
-    config = None
-    idol = None
-
     def __init__(self, logging, config, idol): 
         self.logging = logging 
         self.config = config.get('doccano').copy()
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='DoccanoPool')
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 4), thread_name_prefix='DoccanoPool')
         self.idol = idol 
         login = self.config.get('login')
         self.doccano_login(self.config.get('url'), login.get('username'), login.get('password'))
@@ -37,21 +34,36 @@ class Service:
         r_me = self.doccano_client.get_me().json()
         self.logging.debug(f"Doccano login: {r_me}")
         if not r_me.get('is_superuser'):
-            self.logging.warn(f"User username is not a super-user!")
+            self.logging.warn(f"User {username} is not a super-user!")
         return self.doccano_client
 
+    def get_label_list(self, project_id):
+        return self.executor.submit(self._get_label_list, project_id).result()
+
+    @retry(wait_fixed=10000, stop_max_delay=30000)
+    def _get_label_list(self, project_id):
+        return self.doccano_client.get_label_list(project_id).json()
+
     def populateProject(self, project):
-        project_name = project.get('name').strip()
+        project_name = project.get('name', project.get('project')).strip()
+        if project.get('name', None) == None: self.mergeProjectTask(project)
         projects_list = self.doccano_client.get_project_list().json()
         projects = [_p for _p in projects_list if _p.get('name') == project_name]
-        self.logging.debug(f"all projects: {projects}")
         if len(projects) == 0:
-            self.logging.error(f"Doccano project with name '{project_name}' not found!")
+            self.logging.error(f"Doccano project '{project_name}' not found!")
             return None
-        project['id'] = projects[0].get('id')
-        project['project_type'] = projects[0].get('project_type')
-        self.logging.debug(f"Doccano project: '{project_name}', id: {project.get('id')}")
+        project.update(projects[0])
+        self.logging.info(f"Doccano project: {project}")
         return project
+
+    def mergeProjectTask(self, project):
+        for _p in self.config.get('projects', []):
+            if _p.get('name') == project.get('project'):
+                prj = CaseInsensitiveDict(_p)   
+                prj.pop('enabled', None)
+                prj.pop('startrun', None)
+                prj.pop('interval', None)
+                project.update(prj)
 
     def sync_idol_with_doccano(self, project):
         return self.executor.submit(self._sync_idol_with_doccano, project).result()
@@ -71,7 +83,8 @@ class Service:
 
     def export_training_from_idol(self, project):
         filepath, _, _ = self.getDataFilename(project, 'export', 'tmp', True)
-        docsToMove = []
+        docsToIndex = []
+        docsToDelete = []
         with codecs.open(filepath, 'a', 'utf-8') as outfile:
             # check if doccano is full of pending docs to tag
             statistics = self.doccano_client.get_project_statistics(project.get('id')).json()
@@ -109,17 +122,18 @@ class Service:
                         labels = json.loads(doc.get(project.get('datafield'), ['[]'])[0])
                         hit['fields'] = [(project.get('datafield'), labels)]
                         meta = {
-                            'link': getDocLink(doc),
-                            'date': getDocDate(doc),
-                            'language': doc.get('LANGUAGE', ''),
+                            'url': util.getDocLink(doc),
+                            'date': util.getDocDate(doc),
+                            'links': ','.join(doc.get(f'{util.FIELDPREFIX_FILTER}_LNKS', [])),
+                            'language': doc.get('LANGUAGE', util.DFLT_LANGUAGE+util.DFLT_ENCODE),
                             'reference': hit.get('reference')
                         }
-                        meta.update(getDocFilters(doc))
                         jsonl = json.dumps({'text': text, 'labels': labels, 'meta': meta}, ensure_ascii=False).encode('utf8')
                         outfile.write(jsonl.decode()+'\n')
-                        docsToMove.append(hit)
+                        docsToDelete.append( (hit.get('database'), hit.get('reference')) )
+                        docsToIndex.append(hit)
         # MOVE the selected docs to a staging database
-        if len(docsToMove) > 0: 
+        if len(docsToIndex) > 0: 
             query = {
                 'DREDbName': project.get('database'),
                 'KillDuplicates': 'REFERENCE', ## check for the same reference ONLY in 'DREDbName' database
@@ -127,11 +141,16 @@ class Service:
                 'KeepExisting': True, ## do not replace content for matched references in KillDuplicates
                 'Priority': 100
             }
-            self.idol.index_into_idol(docsToMove, query)
-        return len(docsToMove)
+            self.idol.index_into_idol(docsToIndex, query)
+
+        if len(docsToDelete) > 0:
+            it = itertools.groupby(docsToDelete, operator.itemgetter(0))
+            for db, refsiter in it:
+                self.idol.remove_documents([t[1] for t in refsiter], db)            
+
+        return len(docsToIndex)
                 
     def import_training_into_doccano(self, project):
-        project = self.populateProject(project)
         filepath, folderpath, filename = self.getDataFilename(project, 'export', 'tmp')
         if not os.path.exists(filepath):
             self.logging.error(f"File not found: {filepath}")
@@ -145,7 +164,6 @@ class Service:
         return resp
 
     def export_doccano_to_idol(self, project):
-        project = self.populateProject(project)
         date = datetime.datetime.now().isoformat()
         resp = self.doccano_client.get_doc_download(project.get('id'), 'json')
         docsToIndex = []
@@ -168,7 +186,7 @@ class Service:
                     # update fields
                     idolDoc['content']['DOCUMENT'][0][project.get('textfield')] = [text]
                     idolDoc['content']['DOCUMENT'][0][project.get('datafield')] = [labels.decode()]                
-                    idolDoc['content']['DOCUMENT'][0][project.get('datafield')+tagged_fieldsufix] = [date]
+                    idolDoc['content']['DOCUMENT'][0][project.get('datafield')+util.FIELDSUFFIX_TAGGED] = [date]
                     docsToIndex.append(idolDoc)
                     self.doccano_client.delete_document(project.get('id'), doccanoDoc.get('id'))
                 else:
@@ -194,21 +212,3 @@ class Service:
         if trunc: open(target_file, 'w').close()
         if delt and os.path.exists(target_file): os.remove(target_file)
         return target_file, target_folder, os.path.basename(target_file)
-
-## --------- helper functions ------------
-def getDocLink(doc):
-    return doc.get('URL', doc.get('LINK', doc.get('FEED', [''] )))[0]   
-
-def getDocDate(doc):
-    return doc.get('DATE', doc.get('DREDATE', doc.get('TIMESTAMP', [''] )))[0]   
-
-def getDocFilters(doc):
-    #references = doc.get(f'{filters_fieldprefix}_REFS', [])
-    #dbname = doc.get(f'{filters_fieldprefix}_DBS', [])
-    links = doc.get(f'{filters_fieldprefix}_LNKS', [])
-    prefix = filters_fieldprefix.lower()
-    return {
-        #f'{prefix}_databases': ','.join(dbname),
-        #f'{prefix}_references': ','.join(references),
-        f'{prefix}_links': ','.join(links)
-    }

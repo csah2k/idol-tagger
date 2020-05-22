@@ -4,10 +4,6 @@ import sys
 import time
 import json
 import logging
-import services.idol as idol
-import services.rss as rss
-import services.stock as stock
-import services.doccano as doccano
 import services.scheduler as sched
 from requests.structures import CaseInsensitiveDict
 
@@ -22,27 +18,23 @@ from requests.structures import CaseInsensitiveDict
 # TODO - add metafields manual addition in index tasks configuration
 
 
-logfile='main.log'
-config = {}
-srvcfg = {}
-idolService = None
-
-with open('config.json') as json_configfile:
-    config = CaseInsensitiveDict(json.load(json_configfile))
-    srvcfg = config.get('service',{})
-
 def main():
-    logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=getLogLvl(srvcfg), handlers=[logging.FileHandler(srvcfg.get('logfile', logfile), 'w', 'utf-8')])
+    config = {}
+    srvcfg = {}
+    with open('config.json') as json_configfile:
+        config = CaseInsensitiveDict(json.load(json_configfile))
+        srvcfg = config.get('service',{})
+
+    logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=getLogLvl(srvcfg), handlers=[logging.FileHandler(srvcfg.get('logfile', 'main.log'), 'w', 'utf-8')])
     logging.info("============================ Starting  ============================")
     logging.info(srvcfg)
     logging.debug(config)
-    
-    #idolService = idol.Service(logging, config)
-    schedService = sched.Service(logging, config)
 
+    schedService = sched.Service(logging, config)
     schedService.start()
+
     while True:
-        logging.info("Collecting statistics...")
+        logging.debug("Collecting statistics...")
         _statistics = schedService.statistics()
         # TODO save the statistics in dataset db file
         time.sleep(30)

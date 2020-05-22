@@ -10,146 +10,139 @@ from pathlib import Path
 import spacy
 from spacy.util import minibatch, compounding
 from requests.structures import CaseInsensitiveDict
-tagged_fieldsufix = '_TAGGED'
-trained_fieldsufix = '_TRAINED'
+
+import services.doccano as doccano
+import services.utils as util
 
 # https://spacy.io/api
 
 
 class Service:
 
-    executor = None
-    logging = None
-    config = None
-    idol = None
-
     def __init__(self, logging, config, idol): 
         self.logging = logging 
         self.config = config.get('spacynlp').copy()
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='SpacyPool')
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 4), thread_name_prefix='SpacyPool')
+        self.doccano = doccano.Service(logging, config, idol)
         self.idol = idol 
-
-    '''
-    def saveDB(self):
-        table = self.db['sometable']
-        table.insert(dict(name='John Doe', age=37))
-        table.insert(dict(name='Jane Doe', age=34, gender='female'))
-        _john = table.find_one(name='John Doe')
-    '''
-
-    def openProjectDB(self, project):
-        dbfile = self.getDataFilename(project, 'sqlite', 'db')
+        
+    def openProjectDB(self, project):        
+        dbfile, _, _ = util.getDataFilename(self.config, project, 'sqlite', 'db')
         return dataset.connect(f'sqlite:///{dbfile}')
     
+    def train_project_model(self, project):  
+        return self.executor.submit(self._train_project_model, project)
+
+    def _train_project_model(self, project):  
+        self.logging.info(f"==== Training model ====>  ({project.get('project')})")  
+        _project = self.doccano.populateProject(project)
+        projectType = _project.get('project_type').lower()
+        if projectType == 'documentclassification':
+            self.train_model_classifier(_project)
+        elif projectType == 'sequencelabeling':
+            self.train_model_ner(_project)
+        elif projectType == 'seq2seq':
+            self.train_model_sql(_project)
+        else:
+            self.logging.error(f"Doccano project_type not expected: {projectType}")
+
     def train_model_classifier(self, project, model=None, output_dir=None, n_iter=20, n_texts=2000, init_tok2vec=None):  
-        return self.executor.submit(self._train_model_classifier, project, model, output_dir, n_iter, n_texts, init_tok2vec)
+        languages = self.config.get('languages',{})
+        self.logging.info(f"languages: {languages}")
+        for lang, model in languages.items():
+            # load correct dataset from index
+            self.logging.info(f"Loading classifier data for language: {lang}")
+            (train_texts, train_cats), (dev_texts, dev_cats), categories = self.load_classifier_data(project, lang)
+            if len(categories) == 0 or len(train_texts) == 0:
+                self.logging.info("No new training data found in index")
+                continue
 
-    def _train_model_classifier(self, project, model=None, output_dir=None, n_iter=20, n_texts=2000, init_tok2vec=None):  
-        self.logging.info(f"==== Training model ====>  ({project.get('name')})")  
-        _project = self.populateProject(project)
-        db = openProjectDB(_project)
-
-        runtimes = getProjectLastRuntime(_project, db)
-        for row in runtimes:
-            print(f"runtime: {row['runtime']}")
-
-
-        if model is not None:
+            # only load the model if is data to train
             self.logging.info("Loading model '%s'" % model)
-            nlp = spacy.load(model)  # load existing spaCy model
-        else:
-            self.logging.info("Creating blank 'en' model")
-            nlp = spacy.blank("en")  # create blank Language class
-            
-        # add the text classifier to the pipeline if it doesn't exist
-        # nlp.create_pipe works for built-ins that are registered with spaCy
-        if "textcat" not in nlp.pipe_names:
-            textcat = nlp.create_pipe("textcat", config={"exclusive_classes": True, "architecture": "simple_cnn"})
-            nlp.add_pipe(textcat, last=True)
-        # otherwise, get it, so we can add labels to it
-        else:
-            textcat = nlp.get_pipe("textcat")
+            _nlp = spacy.load(model)
+            # add the text classifier to the pipeline if it doesn't exist
+            if "textcat" not in _nlp.pipe_names:
+                textcat = _nlp.create_pipe("textcat", config={"exclusive_classes": True, "architecture": "simple_cnn"})
+                _nlp.add_pipe(textcat, last=True)
+            # otherwise, get it, so we can add labels to it
+            else:
+                textcat = _nlp.get_pipe("textcat")
 
-        # load correct dataset from IDOL
-        self.logging.info("Loading classifier data...")
-        (train_texts, train_cats), (dev_texts, dev_cats), categories = self.load_classifier_data(_project, db)
-        if len(categories) == 0 or len(train_texts) == 0:
-            self.logging.info("No new training data found in idol")
-            return
+            # add label to text classifier
+            self.logging.info(f"Categories: {categories}")
+            for cat in categories:
+                textcat.add_label(cat)
 
-        # add label to text classifier
-        self.logging.info(f"Categories: {categories}")
-        for cat in categories:
-            textcat.add_label(cat)
+            train_texts = train_texts[:n_texts]
+            train_cats = train_cats[:n_texts]
+            self.logging.info(f"Using {n_texts} examples ({len(train_texts)} training, {len(dev_texts)} evaluation)")
+            train_data = list(zip(train_texts, [{"cats": cats} for cats in train_cats]))
 
-        train_texts = train_texts[:n_texts]
-        train_cats = train_cats[:n_texts]
-        self.logging.info(f"Using {n_texts} examples ({len(train_texts)} training, {len(dev_texts)} evaluation)")
-        train_data = list(zip(train_texts, [{"cats": cats} for cats in train_cats]))
-
-        # get names of other pipes to disable them during training
-        pipe_exceptions = ["textcat", "trf_wordpiecer", "trf_tok2vec"]
-        other_pipes = [pipe for pipe in nlp.pipe_names if pipe not in pipe_exceptions]
-        with nlp.disable_pipes(*other_pipes):  # only train textcat
-            optimizer = nlp.begin_training()
-            if init_tok2vec is not None:
-                with init_tok2vec.open("rb") as file_:
-                    textcat.model.tok2vec.from_bytes(file_.read())
-            self.logging.info("Training the model...")
-            self.logging.debug("{:^5}\t{:^5}\t{:^5}\t{:^5}".format("LOSS", "P", "R", "F"))
-            batch_sizes = compounding(4.0, 32.0, 1.001)
-            for _i in range(n_iter):
-                losses = {}
-                # batch up the examples using spaCy's minibatch
-                random.shuffle(train_data)
-                batches = minibatch(train_data, size=batch_sizes)
-                for batch in batches:
-                    texts, annotations = zip(*batch)
-                    nlp.update(texts, annotations, sgd=optimizer, drop=0.2, losses=losses)
-                with textcat.model.use_params(optimizer.averages):
-                    # evaluate on the dev data split off in load_data()
-                    scores = self.evaluate(nlp.tokenizer, textcat, dev_texts, dev_cats)
-                self.logging.debug(
-                    "{0:.3f}\t{1:.3f}\t{2:.3f}\t{3:.3f}".format(  # print a simple table
-                        losses["textcat"],
-                        scores["textcat_p"],
-                        scores["textcat_r"],
-                        scores["textcat_f"],
+            # get names of other pipes to disable them during training
+            pipe_exceptions = ["textcat", "trf_wordpiecer", "trf_tok2vec"]
+            other_pipes = [pipe for pipe in _nlp.pipe_names if pipe not in pipe_exceptions]
+            with _nlp.disable_pipes(*other_pipes):  # only train textcat
+                optimizer = _nlp.begin_training()
+                if init_tok2vec is not None:
+                    with init_tok2vec.open("rb") as file_:
+                        textcat.model.tok2vec.from_bytes(file_.read())
+                self.logging.info("Training the model...")
+                self.logging.debug("{:^5}\t{:^5}\t{:^5}\t{:^5}".format("LOSS", "P", "R", "F"))
+                batch_sizes = compounding(4.0, 32.0, 1.001)
+                for _i in range(n_iter):
+                    losses = {}
+                    # batch up the examples using spaCy's minibatch
+                    random.shuffle(train_data)
+                    batches = minibatch(train_data, size=batch_sizes)
+                    for batch in batches:
+                        texts, annotations = zip(*batch)
+                        _nlp.update(texts, annotations, sgd=optimizer, drop=0.2, losses=losses)
+                    with textcat.model.use_params(optimizer.averages):
+                        # evaluate on the dev data split off in load_data()
+                        scores = self.evaluate(_nlp.tokenizer, textcat, dev_texts, dev_cats)
+                    self.logging.debug(
+                        "{0:.3f}\t{1:.3f}\t{2:.3f}\t{3:.3f}".format(  # print a simple table
+                            losses["textcat"],
+                            scores["textcat_p"],
+                            scores["textcat_r"],
+                            scores["textcat_f"],
+                        )
                     )
-                )
-        # test the trained model
-        test_text = "Aggressive treatment against covid war in all countries"
-        doc = nlp(test_text)
-        best_cat = ('', 0)
-        for _cat in doc.cats:
-            if doc.cats[_cat] > best_cat[1]:
-                best_cat = (_cat, doc.cats[_cat])
-        self.logging.info(f"{best_cat} : {test_text}")
 
-        if output_dir is not None:
-            with nlp.use_params(optimizer.averages):
-                nlp.to_disk(output_dir)
-            self.logging.info(f"Saved model to {output_dir}")
+            # test the trained model
+            test_text = "Aggressive treatment against covid war in all countries"
+            doc = _nlp(test_text)
+            best_cat = ('', 0)
+            for _cat in doc.cats:
+                if doc.cats[_cat] > best_cat[1]:
+                    best_cat = (_cat, doc.cats[_cat])
+            self.logging.info(f"{best_cat} : {test_text}")
 
-            # test the saved model
-            self.logging.info(f"Loading from {output_dir}")
-            nlp2 = spacy.load(output_dir)
-            doc2 = nlp2(test_text)
-            self.logging.info(test_text, doc2.cats)
+            if output_dir is not None:
+                with _nlp.use_params(optimizer.averages):
+                    _nlp.to_disk(output_dir)
+                self.logging.info(f"Saved model to {output_dir}")
+
+                # test the saved model
+                self.logging.info(f"Loading from {output_dir}")
+                nlp2 = spacy.load(output_dir)
+                doc2 = nlp2(test_text)
+                self.logging.info(test_text, doc2.cats)
                 
-    def load_classifier_data(self, project, db, limit=100, split=0.8):
+    def load_classifier_data(self, project, language, limit=100, split=0.8):
         train_data = []
         # query documents from this project database in IDOL
         query = {
             'DatabaseMatch': project.get('database'),
-            #'FieldText': f"TERM{{label}}:{project.get('datafield')}",
-            'FieldText': f"{{{lastruntime}}}:{project.get('datafield')+tagged_fieldsufix}",
+            'FieldText': f"TERM{{label}}:{project.get('datafield')}", ## tagged but not trained
             'PrintFields': f"{project.get('datafield')},{project.get('textfield')}",
-            'AnyLanguage': True, ## TODO run this 'load_classifier_data' and 'train_model_classifier' for each existing LANGUAGE values
+            'AnyLanguage': False,
+            'MatchLanguageType': language,
             'MaxResults': limit,
             'Text': '*'
         }
         hits = self.idol.query(query)
+        self.logging.info(f"hits: {len(hits)}")
 
         # parse documents into expected 'spacy' format
         for hit in hits:
@@ -157,18 +150,21 @@ class Service:
             data = json.loads(hit['content']['DOCUMENT'][0][project.get('datafield')][0])
             labels = [_l.get('label') for _l in data]
             train_data.append((text, labels)) 
+        
         if len(train_data) > 1:
             random.shuffle(train_data)
             train_data = train_data[-limit:]
             texts, labels = zip(*train_data)
 
             # list categories (labels) from Doccano
-            project_labels = self.doccano_client.get_label_list(project.get('id'))
+            project_labels = self.doccano.get_label_list(project.get('id'))
             labels_map = {}
             labels_template = {}
-            for _l in project_labels.json():
+            for _l in project_labels:
                 labels_map[_l.get('id')] = _l.get('text')
                 labels_template[_l.get('text')] = False
+
+            self.logging.info(f"labels_map: {labels_map}")
 
             # extract categories
             cats = []
@@ -181,7 +177,6 @@ class Service:
             # Partition off part of the train data for evaluation
             split = int(len(train_data) * split)
             return (texts[:split], cats[:split]), (texts[split:], cats[split:]), list(labels_template.keys())
-        self.logging.warn(f"No enough Idol results to create training data: {len(train_data)}")
         return ([], []), ([], []), []
 
     def train_model_ner(self, model=None, output_dir=None, n_iter=100):
@@ -254,13 +249,15 @@ class Service:
                 logging.info(f"Entities {[(ent.text, ent.label_) for ent in doc.ents]}")
                 logging.info(f"Tokens {[(t.text, t.ent_type_, t.ent_iob) for t in doc]}")
         
-
-
     def load_entity_data(self, limit=0, split=0.8):
         # Partition off part of the train data for evaluation
         train_data = []
         #[ ("E TEMPO DE APRENDER-MEU PRIMEIRO LIVRO (EDUCAÇÃO INFANTIL)", {"entities": [(0, 58, "LIVRO")]}), ]
         return train_data
+
+
+    def train_model_sql(self, project):
+        self.logging.wanr(f"not implemented")
 
     def evaluate(self, tokenizer, textcat, texts, cats):
         docs = (tokenizer(text) for text in texts)
@@ -291,27 +288,4 @@ class Service:
             f_score = 2 * (precision * recall) / (precision + recall)
         return {"textcat_p": precision, "textcat_r": recall, "textcat_f": f_score}
 
-    def getDataFilename(self, project, sufx=None, ext='dat', trunc=False, delt=False):
-        datafile = None
-        if sufx != None: datafile = f"{project.get('name')}_{sufx}.{ext}"
-        else: datafile = f"{project.get('name')}.{ext}"
-        dataFolder = self.config.get('tempfolder', 'data')
-        target_file = os.path.abspath(os.path.join(dataFolder, datafile))
-        target_folder = os.path.dirname(target_file)
-        os.makedirs(target_folder, exist_ok=True)
-        if trunc: open(target_file, 'w').close()
-        if delt and os.path.exists(target_file): os.remove(target_file)
-        return target_file #, target_folder, os.path.basename(target_file)
-
-## --------- helper functions ------------
-def getDocLink(doc):
-    return doc.get('URL', doc.get('LINK', doc.get('FEED', [''] )))[0]   
-
-def getDocDate(doc):
-    return doc.get('DATE', doc.get('DREDATE', doc.get('TIMESTAMP', [''] )))[0]   
-
-def getProjectLastRuntime(project, db):
-    table = db['executions']
-    return table.find(order_by='-runtime', _limit=1)
-    #for row in results:
-    #    print(f"row['runtime']")
+   

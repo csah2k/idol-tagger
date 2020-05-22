@@ -2,28 +2,22 @@
 import re 
 import time
 import uuid 
-import html
 import random
 import logging
 import datetime
-import html2text
 import feedparser
 import concurrent.futures
 from retrying import retry
 from requests.structures import CaseInsensitiveDict
-filters_fieldprefix = 'FILTERINDEX'
+
+import services.utils as util
 
 class Service:
-
-    re_http_url = re.compile(r'^.*(https?://.+)$', re.IGNORECASE)    
-    executor = None
-    logging = None
-    config = None
-    idol = None
 
     def __init__(self, logging, config, idol): 
         self.logging = logging 
         self.config = config.copy()
+        self.re_http_url = re.compile(r'^.*(https?://.+)$', re.IGNORECASE)   
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='RssPool')
         self.idol = idol 
 
@@ -86,8 +80,8 @@ class Service:
                 self.logging.debug(f"processing feed entry: {link}")
                 reference = uuid.uuid3(uuid.NAMESPACE_URL, link)
                 date = _e.get('published', _e.get('timestamp', _e.get('date')))
-                summr = self.cleanText(_e.get('summary', _e.get('description', _e.get('text',''))))
-                title = self.cleanText(_e.get('title', _e.get('titulo', _e.get('headline', summr))))
+                summr = util.cleanText(_e.get('summary', _e.get('description', _e.get('text',''))))
+                title = util.cleanText(_e.get('title', _e.get('titulo', _e.get('headline', summr))))
                 
                 content = f"{title}\n{summr}"
                 lang_info= self.idol.detect_language(content)
@@ -121,9 +115,9 @@ class Service:
                             ('SUMMARY', summr),
                             ('URL', link),
                             ('FEED', feed_url) ]
-                        + [(f'{filters_fieldprefix}_DBS', _hit.get('database')) for _hit in idolHits] 
-                        + [(f'{filters_fieldprefix}_LNKS', _hit.get('links')) for _hit in idolHits]
-                        + [(f'{filters_fieldprefix}_REFS', _hit.get('reference')) for _hit in idolHits]
+                        + [(f'{util.FIELDPREFIX_FILTER}_DBS', _hit.get('database')) for _hit in idolHits] 
+                        + [(f'{util.FIELDPREFIX_FILTER}_LNKS', _hit.get('links')) for _hit in idolHits]
+                        + [(f'{util.FIELDPREFIX_FILTER}_REFS', _hit.get('reference')) for _hit in idolHits]
                     })
             except Exception as error:
                 self.logging.error(f"ENTRY_URL: {link} | {str(error)}")
@@ -144,13 +138,5 @@ class Service:
     def get_feed_from_url(self, feed_url):
         return feedparser.parse(feed_url)
 
-    def cleanText(self, text):
-        text_maker = html2text.HTML2Text()
-        text_maker.ignore_links = True
-        text_maker.ignore_images = True
-        text = html.unescape(text)
-        text = text_maker.handle(text)
-        text = text.strip().capitalize()
-        return text
 
 
