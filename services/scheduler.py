@@ -2,7 +2,7 @@
 import time
 import sched
 import concurrent.futures
-import services.idol as idl
+import services.elastic as elastic
 import services.rss as rss
 import services.stock as stock
 import services.doccano as doccano
@@ -14,93 +14,81 @@ class Service:
     def __init__(self, logging, config): 
         self.logging = logging 
         self.config = config.copy()
-        self.idol = idl.Service(logging, config)
-        self.scheduler = sched.scheduler(time.time, time.sleep) 
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix='Scheduler')
-        
+        self.index = elastic.Service(logging, config)
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='Scheduler')
+
     def statistics(self):
         return 'TODO'
 
-    def start(self):
-        self.executor.submit(self._start)
+    def scheduleProfileTasks(self, profile):
+        # TODO validate config 
+        #self.executor.max_workers += 1
+        self.executor.submit(self._start, profile)
 
-    def _start(self):
-        self.schedule_index_tasks()
-        self.schedule_doccano_tasks()
-        self.schedule_spacynlp_tasks()
-        self.scheduler.run()
+    def _start(self, profile):
+        _sched = sched.scheduler(time.time, time.sleep) 
+        indices = profile.get('indices')
+        self.index.initIndices(indices)
 
-    def schedule_index_tasks(self):
-        for task in self.config.get('indextasks'):
+        #self.index.addIndexFilter(indices.get('filters'), 'Jair Bolsonaro', '(jair messias) OR (jair bolsonaro) OR bonoro OR bolsonabo OR bolsomito')
+        #self.index.addIndexFilter(indices.get('filters'), 'Covid-19', '(corona virus) OR covid OR covid19 OR cov19 OR (china virus)')
+
+
+        self.schedule_index_tasks(_sched, indices, profile.get('indextasks'))
+        self.schedule_doccano_tasks(_sched, indices, profile.get('projects'))
+
+        return _sched.run()
+
+    def schedule_index_tasks(self, scheduler, indices, tasks):
+        for task in tasks:
             if task.get('enabled'):
                 if task.get('startrun', False):
-                    self.run_index_task(task, self.scheduler)
+                    self.run_index_task(scheduler, indices, task)
                 else:
-                    self.scheduler.enter(task.get('interval', defInterval), 3, self.run_index_task, (task, self.scheduler)) 
+                    scheduler.enter(task.get('interval', defInterval), 3, self.run_index_task, (scheduler, indices, task)) 
     
 
-    def schedule_doccano_tasks(self):
-        for task in self.config.get('doccano',{}).get('projects', []):
+    def schedule_project_tasks(self, scheduler, indices, tasks):
+        for task in tasks:
             if task.get('enabled'):
                 if task.get('startrun', False):
-                    self.run_doccano_task(task, self.scheduler)
+                    self.run_project_task(scheduler, indices, task)
                 else:
-                    self.scheduler.enter(task.get('interval', defInterval), 1, self.run_doccano_task, (task, self.scheduler))
+                    scheduler.enter(task.get('interval', defInterval), 1, self.run_project_task, (scheduler, indices, task))
 
-    def schedule_spacynlp_tasks(self):
-        for task in self.config.get('spacynlp',{}).get('tasks', []):
-            if task.get('enabled'):
-                if task.get('startrun', False):
-                    self.run_spacynlp_task(task, self.scheduler)
-                else:
-                    self.scheduler.enter(task.get('interval', defInterval), 2, self.run_spacynlp_task, (task, self.scheduler))
 
-    def run_index_task(self, task, scheduler=None):
-        self.logging.debug(f"Running scheduled task '{task.get('name')}'")
+    def run_index_task(self, scheduler, indices, task):
+        self.logging.info(f"Running scheduled task '{task.get('name')}'")
         try:
             # INDEX RSS FEEDS
             if task.get('type') == 'rss':
-                rssService = rss.Service(self.logging, task, self.idol)
-                #_result = rssService.index_feeds(task.get('threads',0)) ## limiting number of feeds urls to the number of threads for fast testing
-                _result = rssService.index_feeds()
+                rssService = rss.Service(self.logging, task, self.index)
+                _result = rssService.index_feeds(indices, task.get('threads',0)) ## limiting number of feeds urls to the number of threads for fast testing
+                #_result = rssService.index_feeds(indices)
             # INDEX STOCK SYMBOLS
             elif task.get('type') == 'stock':
-                stockService = stock.Service(self.logging, task, self.idol)
+                stockService = stock.Service(self.logging, task, self.index)
                 exchangeCodes = task.get('exchanges', [])
                 if len(exchangeCodes) == 0:
                     exchangeCodes = stockService.list_exchange_codes()
                 stockService.index_stocks_symbols(exchangeCodes)
             # schedule next run
-            if scheduler != None:
-                self.logging.debug(f"Scheduling '{task.get('name')}' next run in {task.get('interval', defInterval)} seconds")
-                scheduler.enter(task.get('interval', defInterval), 2, self.run_index_task, (task, self.scheduler))
+            self.logging.info(f"Scheduling '{task.get('name')}' next run in {task.get('interval', defInterval)} seconds")
+            scheduler.enter(task.get('interval', defInterval), 2, self.run_index_task, (scheduler, indices, task))
         except Exception as error:
                 self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")
 
-    def run_doccano_task(self, task, scheduler=None):
-        self.logging.debug(f"Running scheduled task '{task.get('name')}'")
+    def run_project_task(self, scheduler, indices, task):
+        self.logging.info(f"Running scheduled task '{task.get('name')}'")
         try:
-            doccanoService = doccano.Service(self.logging, self.config, self.idol)
             # Idol <-> Doccano
+            doccanoService = doccano.Service(self.logging, self.config, self.index)
             doccanoService.sync_idol_with_doccano(task)
-            # schedule next run
-            if scheduler != None:
-                self.logging.debug(f"Scheduling '{task.get('name')}' next run in {task.get('interval', defInterval)} seconds")
-                scheduler.enter(task.get('interval', defInterval), 1, self.run_doccano_task, (task, self.scheduler))
-        except Exception as error:
-            self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")
-
-    def run_spacynlp_task(self, task, scheduler=None):
-        self.logging.debug(f"Running scheduled task '{task.get('name')}'")
-        try:
-            spacyService = spacynlp.Service(self.logging, self.config, self.idol)
             # Model training
-            spacyService.train_project_model(task)
+            #spacyService = spacynlp.Service(self.logging, self.config, self.index)
+            #spacyService.train_project_model(task)
             # schedule next run
-            if scheduler != None:
-                self.logging.debug(f"Scheduling '{task.get('name')}' next run in {task.get('interval', defInterval)} seconds")
-                scheduler.enter(task.get('interval', defInterval), 1, self.run_spacynlp_task, (task, self.scheduler))
+            self.logging.info(f"Scheduling '{task.get('name')}' next run in {task.get('interval', defInterval)} seconds")
+            scheduler.enter(task.get('interval', defInterval), 1, self.run_doccano_task, (scheduler, indices, task))
         except Exception as error:
             self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")
-
-   

@@ -26,18 +26,24 @@ def main():
         srvcfg = config.get('service',{})
 
     logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=getLogLvl(srvcfg), handlers=[logging.FileHandler(srvcfg.get('logfile', 'main.log'), 'w', 'utf-8')])
+    logging.getLogger('elasticsearch').setLevel(logging.WARNING)
+
     logging.info("============================ Starting  ============================")
     logging.info(srvcfg)
     logging.debug(config)
 
     schedService = sched.Service(logging, config)
-    schedService.start()
+
+    # TODO this will be inside a loop where all profiles will be started or updated inside the scheduler
+    # profiles will be in a sql database
+    schedService.scheduleProfileTasks(config.get('profile'))
 
     while True:
         logging.debug("Collecting statistics...")
         _statistics = schedService.statistics()
         # TODO save the statistics in dataset db file
         time.sleep(30)
+  
     
 
     

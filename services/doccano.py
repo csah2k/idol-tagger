@@ -11,6 +11,7 @@ from retrying import retry
 from doccano_api_client import DoccanoClient
 from requests.structures import CaseInsensitiveDict
 
+from services.elastic import Service as elasticService
 import services.utils as util
 
 # https://github.com/doccano/doccano
@@ -18,11 +19,11 @@ import services.utils as util
 
 class Service:
 
-    def __init__(self, logging, config, idol): 
+    def __init__(self, logging, config, index:elasticService): 
         self.logging = logging 
         self.config = config.get('doccano').copy()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 4), thread_name_prefix='DoccanoPool')
-        self.idol = idol 
+        self.index = index 
         login = self.config.get('login')
         self.doccano_login(self.config.get('url'), login.get('username'), login.get('password'))
 
