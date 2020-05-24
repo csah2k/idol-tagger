@@ -57,11 +57,11 @@ def getProjectLastRuntime(project, db):
     #for row in results:
     #    print(f"row['runtime']")
 
-def getDataFilename(config, project, sufx=None, ext='dat', trunc=False, delt=False):
+def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False):
         datafile = None
-        if sufx != None: datafile = f"{project.get('name')}_{sufx}.{ext}"
-        else: datafile = f"{project.get('name')}.{ext}"
-        dataFolder = config.get('tempfolder', 'data')
+        if sufx != None: datafile = f"{name}_{sufx}.{ext}"
+        else: datafile = f"{name}.{ext}"
+        dataFolder = config.get('tempfolder', config.get('storage','data'))
         target_file = os.path.abspath(os.path.join(dataFolder, datafile))
         target_folder = os.path.dirname(target_file)
         os.makedirs(target_folder, exist_ok=True)

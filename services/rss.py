@@ -26,11 +26,11 @@ class Service:
     def getStatitics(self):
         return self.statistics.copy()
 
-    def index_feeds(self, indices, max_feeds=0):
-        self.executor.submit(self._index_feeds, indices, max_feeds).result()
+    def index_feeds(self, max_feeds=0):
+        self.executor.submit(self._index_feeds, max_feeds).result()
         self.executor.shutdown()
         
-    def _index_feeds(self, indices, max_feeds=0):
+    def _index_feeds(self, max_feeds=0):
         self.logging.info(f"==== Starting ====>  RSS indextask '{self.config.get('name')}'")
         start_time = time.time()
         filename = self.config.get('feeds', 'data/feeds')
@@ -52,7 +52,7 @@ class Service:
         index_threads = []
         for _url in feeds_urls:
             index_threads.append(
-                self.executor.submit(self.index_feed, indices, _url, 
+                self.executor.submit(self.index_feed, self.config['indices'], _url, 
                     self.executor.submit(self.get_feed_from_url, _url).result())) 
 
         total_process_docs = 0
@@ -88,7 +88,7 @@ class Service:
                 title = util.cleanText(_e.get('title', _e.get('titulo', _e.get('headline', content)))) # TODO truncate big titles
 
                 if self.config.get('filters', False):
-                    filterHits = self.index.search_filters(content, indices.get('filters'))
+                    filterHits = self.index.search_filters(content, indices['filters'])
 
                 if not self.config.get('filters', False) or len(filterHits) > 0:
                     doc = {
@@ -103,7 +103,7 @@ class Service:
                     }
                     for hit in filterHits:
                         doc['filter'][hit.get('id')] = hit.get('title')
-                    total_indexed_docs += self.index.index_document(doc, indices.get('indexdata'))
+                    total_indexed_docs += self.index.index_document(doc, indices['indexdata'])
             except Exception as error:
                 self.logging.error(f"ENTRY_URL: {link} | {str(error)}")
 

@@ -1,8 +1,12 @@
 {
     "service":{
         "logfile": "service.log",
-        "loglevel": "INFO"
+        "loglevel": "INFO",
+        "maxtasks": 4,
+        "mongodb": "mongodb://localhost:27017/",
+        "storage": "./data"
     },
+    
     "elastic": {
         "threads": 4,
         "api":{
@@ -10,6 +14,7 @@
             "port": 9200
         }
     },
+
     "spacynlp":{
         "languages":{
             "en" : "en_core_web_sm",
@@ -17,6 +22,7 @@
             "unknown": "xx_ent_wiki_sm"
         }
     },
+
     "doccano":{
         "tempfolder": "data",
         "url": "http://localhost:8000",
@@ -25,56 +31,74 @@
             "password": "password"
         }
     },
-    "profile":{
-        "indices": {
-            "indexdata": "bqu00",
-            "filters": "qf9q0"
+
+    "tasks":{
+        "doccano":{
+            "enabled": false,
+            "startrun": false,
+            "interval": 600,
+            "maxremaining": 500
         },
-        "indextasks":[
-            {
-                "name": "Empresas nas bolsas US e BR",
-                "type": "stock",
-                "enabled": false,
-                "startrun": false,
-                "interval": 604800,
-                "threads": 2,
-                "database": "BUSINESS",
-                "url": "https://finnhub.io/api/v1",
-                "api": "bqu00jvrh5rb3gqqf9q0",
-                "key": "bqu04u7rh5rb3gqqfb1g",
-                "exchanges": ["US", "BR"],
-                "filters": [ ]
-            },
-            {
-                "name": "Feeds de noticias",
-                "type": "rss",
-                "enabled": true,
-                "startrun": true,
-                "filters": true,
-                "interval": 3600,
-                "threads": 20,
-                "feeds": "data/feeds.rss"
-            }
-        ],
-        "projects": [
-            {
-                "name": "polical_agent",
-                "enabled": false,
-                "startrun": false,
-                "interval": 600,
-                "maxremaining": 500,
-                "queries": [
-                    {
-                        "query_string" : {
-                            "query" : "(new york city) OR (big apple)",
-                            "default_field" : "content"
-                        }
-                    },
-                    {
-                        "match_all": {}
-                    }
-                ]
-            }
-        ]
+        "rss": {
+            "type": "rss",
+            "name": "RSS Feeds",
+            "enabled": false,
+            "startrun": false,
+            "filters": false,
+            "interval": 60,
+            "threads": 5,
+            "feeds": "data/feeds.rss"
+        },
+        "stock": {
+            "name": "Empresas nas bolsas US e BR",
+            "type": "stock",
+            "enabled": false,
+            "startrun": false,
+            "interval": 604800,
+            "threads": 2,
+            "database": "BUSINESS",
+            "url": "https://finnhub.io/api/v1",
+            "api": "bqu00jvrh5rb3gqqf9q0",
+            "key": "bqu04u7rh5rb3gqqfb1g",
+            "exchanges": ["US", "BR"],
+            "filters": [ ]
+        }
+    },
+
+    "default_profile":{
+        "login": "user@email.com",
+        "roles": ["admin","user"],
+        "indices": {
+            "indexdata": "data",
+            "filters": "filtr"
+        }
+    },
+
+    "TEST_indextasks": {
+        "stock": {
+            "name": "Empresas nas bolsas US e BR",
+            "type": "stock",
+            "enabled": false,
+            "api": "bqu00jvrh5rb3gqqf9q0",
+            "key": "bqu04u7rh5rb3gqqfb1g",
+            "exchanges": ["US", "BR"],
+            "filters": [ ]
+        },
+        "rss": {
+            "name": "Feeds de noticias",
+            "type": "rss",
+            "enabled": true,
+            "filters": true,
+            "feeds": "data/feeds.rss"
+        }
+    },
+
+    "default_project": {
+        "enabled": false,
+        "query": {
+            "match_all": {}
+        }
     }
+        
+    
 }

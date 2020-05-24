@@ -19,8 +19,14 @@ import services.utils as util
 
 
 #self.detect_language("Qbox makes it easy for us to provision an Elasticsearch cluster without wasting time on all the details of cluster configuration.")
-
-
+''' QUERY
+{
+    "query_string" : {
+        "query" : "(new york city) OR (big apple)",
+        "default_field" : "content"
+    }
+},
+'''
 class Service:
 
     def __init__(self, logging, config:dict): 
@@ -32,10 +38,16 @@ class Service:
         self.executor.submit(self.initService).result()
     
     def initService(self):
-        self.elastic = Elasticsearch([self.config.get('api')])
-        self.inf = self.elastic.info() 
-        self.logging.info(f"Connected to Elastic Server [cluster_name: '{self.inf['cluster_name']}', version: {self.inf['version']['number']}]")
-        self._create_pipelines()
+        try:
+            self.elastic = Elasticsearch([self.config.get('api')])
+            self.inf = self.elastic.info() 
+            self.logging.info(f"Connected to Elastic Server [cluster_name: '{self.inf['cluster_name']}', version: {self.inf['version']['number']}]")
+            self._create_pipelines()
+            return True
+        except Exception as error:
+            self.logging.error(f"ElasticService: {error}")
+            return False
+        
         
     def initIndices(self, indices:dict):   
         return self.executor.submit(self._initIndices, indices).result()

@@ -83,7 +83,7 @@ class Service:
             self.import_training_into_doccano(project)
 
     def export_training_from_idol(self, project):
-        filepath, _, _ = self.getDataFilename(project, 'export', 'tmp', True)
+        filepath, _, _ = util.getDataFilename(project['name'], 'export', 'tmp', True)
         docsToIndex = []
         docsToDelete = []
         with codecs.open(filepath, 'a', 'utf-8') as outfile:
@@ -92,7 +92,7 @@ class Service:
             maxremaining = project.get('maxremaining', 100)
             remaining = statistics.get('remaining', 0)
             if remaining >= maxremaining:
-                self.logging.warn(f"Doccano project '{project.get('name')}' is already full with documents to tag [remaining: {remaining}, maxremaining: {maxremaining}]")
+                self.logging.warn(f"Doccano project '{project['name']}' is already full [remaining: {remaining}, maxremaining: {maxremaining}]")
                 return 0
 
             for _query in project.get('queries'):
@@ -152,7 +152,7 @@ class Service:
         return len(docsToIndex)
                 
     def import_training_into_doccano(self, project):
-        filepath, folderpath, filename = self.getDataFilename(project, 'export', 'tmp')
+        filepath, folderpath, filename = util.getDataFilename(project['name'], 'export', 'tmp')
         if not os.path.exists(filepath):
             self.logging.error(f"File not found: {filepath}")
             return
@@ -202,14 +202,3 @@ class Service:
             }
             self.idol.index_into_idol(docsToIndex, query)
 
-    def getDataFilename(self, project, sufx=None, ext='dat', trunc=False, delt=False):
-        datafile = None
-        if sufx != None: datafile = f"{project.get('name')}_{sufx}.{ext}"
-        else: datafile = f"{project.get('name')}.{ext}"
-        dataFolder = self.config.get('tempfolder', 'data')
-        target_file = os.path.abspath(os.path.join(dataFolder, datafile))
-        target_folder = os.path.dirname(target_file)
-        os.makedirs(target_folder, exist_ok=True)
-        if trunc: open(target_file, 'w').close()
-        if delt and os.path.exists(target_file): os.remove(target_file)
-        return target_file, target_folder, os.path.basename(target_file)

@@ -3,6 +3,7 @@
 src/doccano_api_client
 src/doccano
 index/elastic/elastic*
+index/mongo/mongodb*
 __pycache__/
 *.py[cod]
 *.so
