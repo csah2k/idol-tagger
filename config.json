@@ -36,10 +36,11 @@
 
     "admin_tasks":[
         {
-            "type": "sync_doccano",
+            "name": "Sync between Doccano & MongoDB",
+            "type": "sync_doccano_with_mongodb",
             "enabled": true,
             "startrun": false,
-            "interval": 300
+            "interval": 120
         }
     ],
 

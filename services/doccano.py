@@ -51,7 +51,6 @@ class Service:
         return user
 
     def sync_with_mongodb(self, task:dict):
-        self.logging.info("====== sync doccano with mongodb =====")
         threads = [self.executor.submit(self._sync_projects_with_mongodb), self.executor.submit(self._sync_users_with_mongodb)]
         for _t in threads:
             _t.result()
@@ -75,10 +74,10 @@ class Service:
                 self.index.initIndices(user['indices'])
                 ## add in mongodb
                 self.mongo_users.insert_one(user)
-                self.logging.info(f"User added '{user.get('name',user_id)}'")
+                self.logging.info(f"User added '{user.get('username',user_id)}'")
             else:
                 self.mongo_users.update_one(query, {"$set": user})
-                self.logging.info(f"User updated '{user.get('name',user_id)}'")
+                self.logging.info(f"User updated '{user.get('username',user_id)}'")
 
     def _sync_projects_with_mongodb(self):
         # list doccano projects

@@ -40,6 +40,12 @@ def getDocLink(doc):
 def getDocDate(doc):
     return doc.get('DATE', doc.get('DREDATE', doc.get('TIMESTAMP', [''] )))[0]   
 
+def getTaskName(task:dict):
+    return task.get('name', f"{task.get('type','')}-{task.get('_id','')}")
+
+def getTaskUser(task:dict):
+    return task.get('user',{}).get('username',task.get('username','-'))
+
 def getDocFilters(doc):
     #references = doc.get(f'{FIELDPREFIX_FILTER}_REFS', [])
     #dbname = doc.get(f'{FIELDPREFIX_FILTER}_DBS', [])

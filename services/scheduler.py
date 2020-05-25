@@ -1,7 +1,6 @@
 
 import time
 import sched
-import sqlite3
 import concurrent.futures
 import services.rss as rss
 import services.stock as stock
@@ -11,6 +10,9 @@ from retrying import retry
 from bson.objectid import ObjectId
 from services.elastic import Service as elasticService
 from services.doccano import Service as doccanoService
+
+pooling_interval=3000
+
 class Service:
     
     def __init__(self, logging, config, mongodb, doccano:doccanoService, index:elasticService): 
@@ -22,39 +24,44 @@ class Service:
         self.mongo_tasks = mongodb['tasks']
         self.mongo_users = mongodb['users']
         self.mongo_projects = mongodb['projects']
-        self.db = sqlite3.connect(':memory:', check_same_thread=False)
-        self.db.cursor().execute("create table running_tasks (id, username, interval, lastruntime)")
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=maxtasks+1, thread_name_prefix='Scheduler')
+        self.executor.submit(self.reset_tasks).result()
         self.executor.submit(self.handle_tasks)
-        self.logging.info(f"Scheduler service started: {maxtasks} maximum tasks")
+        self.logging.info(f"Scheduler service started  [{maxtasks} tasks]")
 
     def statistics(self):
         return 'TODO'
 
-    @retry(wait_fixed=10000)
+    def reset_tasks(self):
+        curr_time = int(time.time())
+        query = {"enabled":True, "running":True}
+        self.mongo_tasks.update_many(query, {"$set":{"running":False}})
+
+    @retry(wait_fixed=pooling_interval)
     def handle_tasks(self):
         try:
             curr_time = int(time.time())
-            cur = self.db.cursor().execute("select id, username from running_tasks where ( ? - lastruntime ) > interval", (curr_time, ))
-            for row in cur.fetchall():
-                self.logging.info(f"Running task '{row[0]}' @ '{row[1]}'")
-                # get user & task updated metadata
-                task = self.mongo_tasks.find_one({'_id': ObjectId(row[0])})
-                profile = self.mongo_users.find_one({'username': row[1]})
-                task.update(profile)
-                # merge the user settings with the default config
-                dft_cfg = self.config['tasks'][task.get('type')].copy()
-                dft_cfg.update(task)
+            query = {"enabled": True, "running": False, "nextruntime": {"$lt": curr_time }}
+            for task in self.mongo_tasks.find(query):                
                 # add to executor pool 
                 self.executor.submit(self.runTask, task)
-                # update lastruntime
-                self.db.cursor().execute("update running_tasks set lastruntime = ? where id = ?", (curr_time, row[0]))
+            self.mongo_tasks.update_many(query, {"$set":{"running":True, "lastruntime":curr_time}})
+                
         except Exception as error:
             self.logging.error(f"Scheduler: {str(error)}") 
         raise Exception('sleeping')
             
     def runTask(self, task:dict):
+        # TODO get statistics here for any type of task
+        error = None
         try:
+            # merge the user settings and the default config with current task
+            username = util.getTaskUser(task)
+            self.logging.info(f"Running task '{util.getTaskName(task)}' @ '{username}'")
+            user = self.mongo_users.find_one({'username': username})
+            task = self.merge_default_task_config(task)
+            task.update({"user":user})
+
             # INDEX RSS FEEDS
             if task['type'] == 'rss':
                 rssService = rss.Service(self.logging, task, self.index)
@@ -69,33 +76,29 @@ class Service:
                 stockService.index_stocks_symbols(exchangeCodes)
             # DOCCANO DATA SYNC
             elif task['type'] == 'doccano':
-                self.doccano.sync_idol_with_doccano(task)
-            # DOCCANO USERS/PROJECTS SYNC
-            elif task['type'] == 'sync_doccano':
-                self.doccano.sync_with_mongodb(task)
+                self.doccano.sync_idol_with_doccano(task) 
             # MODEL TRAINING
             elif task['type'] == 'spacynlp':
                 spacyService = spacynlp.Service(self.logging, self.config, self.index)
-                #spacyService.train_project_model(task)
+                #spacyService.train_project_model(_task)
+            ## SYSTEM ADMIN TASKS
+            elif task['type'] == 'sync_doccano_with_mongodb':
+                self.doccano.sync_with_mongodb(task)
+
         except Exception as error:
             self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")
+            error = str(error)
+        finally:
+            curr_time = int(time.time())
+            update = {
+                "running": False,
+                "nextruntime": curr_time+task.get('interval',60)
+            }
+            if error != None: update['error'] = error
+            self.mongo_tasks.update_one({'_id': task['_id']}, {"$set": update})
 
-    def schedule_all_users_tasks(self):
-        self.executor.submit(self._schedule_all_users_tasks)
-
-    def _schedule_all_users_tasks(self):
-        for user in self.mongo_users.find():
-            self._schedule_user_tasks(user)    
-
-    def schedule_user_tasks(self, user:dict):
-        self.executor.submit(self._schedule_user_tasks, user)
-
-    def _schedule_user_tasks(self, user:dict):
-        for task in self.mongo_tasks.find({"username": user['username']}):
-            _task = self.config.get('user_tasks',{}).get(task.get('type'),{}).copy()
-            _task.update({"user":user})
-            _task.update(task)
-            curr_time = 0 if _task.get('startrun',False) else int(time.time())
-            self.logging.info(f"Scheduling task '{_task.get('name',_task['_id'])}' @ '{user['username']}' next run in {_task['interval']} seconds")
-            self.db.cursor().execute("insert into running_tasks values (?, ?, ?, ?)", (str(_task['_id']), user['username'], _task['interval'], curr_time))            
+    def merge_default_task_config(self, task:dict):
+        _task = self.config.get('user_tasks',{}).get(task.get('type','default'),{}).copy()
+        _task.update(task)
+        return _task
             

@@ -5,6 +5,7 @@ import time
 import json
 
 import logging
+import services.utils as util
 import services.elastic as elastic
 import services.doccano as doccano
 import services.scheduler as scheduler
@@ -45,15 +46,9 @@ class Service:
     def start(self):
         # tasks scheduler setup
         self.setup_admin_usertasks()
-        self.scheduler.schedule_all_users_tasks()
 
         # MOCK
-        #self.get_user_profile("cassio")
-        #self.doccano.sync_with_mongodb()
-        #self.doccano.get_user_projects("cassio")
-        #self.doccano.sync_user_projects("csah2k")
         #self.add_user_task("csah2k", self.config['TEST_indextasks']['rss'])
-
 
         while True:
             #statistics = self.scheduler.statistics()
@@ -64,8 +59,14 @@ class Service:
     def add_user_task(self, username:str, task:dict):
         query = {"username": username}
         task.update(query)
+        task.update({
+            "lastruntime": 0,
+            "nextruntime": 0 if task.get('startrun',False) else int(time.time())+task.get('interval',60),
+            "running": False,
+            "error": None
+        })
         self.mongo_tasks.insert_one(task)
-        self.logging.info(f"Task added: {str(task['_id'])} @ {username}")
+        self.logging.info(f"Task added: '{util.getTaskName(task)}' @ '{username}'")
 
     def setup_admin_usertasks(self, username='admin'):
         query = {"username":username}
@@ -73,7 +74,7 @@ class Service:
         tasks = self.config.get('admin_tasks',[])
         for task in tasks:
             task.update(query)
-            self.mongo_tasks.insert_one(task)   
+            self.add_user_task(username, task)   
 
 
 def main():

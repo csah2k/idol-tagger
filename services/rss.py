@@ -17,11 +17,13 @@ class Service:
 
     def __init__(self, logging, config, index:elasticService): 
         self.logging = logging 
-        self.config = config.copy()
-        self.re_http_url = re.compile(r'^.*(https?://.+)$', re.IGNORECASE)   
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='RssPool')
+        self.config = config
         self.index = index 
-        self.statistics = { 'threads': self.config.get('threads', 2), 'feeds': 0, 'scanned': 0, 'indexed': 0, 'elapsed_seconds': 0 }
+        self.re_http_url = re.compile(r'^.*(https?://.+)$', re.IGNORECASE)   
+        self.numthreads = self.config.get('threads',2)
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.numthreads, thread_name_prefix='RssPool')
+        self.statistics = { 'threads': self.numthreads, 'feeds': 0, 'scanned': 0, 'indexed': 0, 'elapsed_seconds': 0 }
+        self.logging.info(config)
 
     def getStatitics(self):
         return self.statistics.copy()
@@ -31,7 +33,7 @@ class Service:
         self.executor.shutdown()
         
     def _index_feeds(self, max_feeds=0):
-        self.logging.info(f"==== Starting ====>  RSS indextask '{self.config.get('name')}'")
+        self.logging.info(f"RSS indextask '{self.config.get('name')}'")
         start_time = time.time()
         filename = self.config.get('feeds', 'data/feeds')
         feeds_file = open(filename, 'r') 
@@ -46,7 +48,7 @@ class Service:
         random.shuffle(feeds_urls) ## shuffle to avoid flood same domain with all threads at same time
         if max_feeds <= 0: max_feeds = len(feeds_urls)
         feeds_urls = feeds_urls[:max_feeds]
-        self.logging.info(f"Crawling {len(feeds_urls)} urls using {self.config.get('threads', 2)} threads")
+        self.logging.info(f"Crawling {len(feeds_urls)} urls using {self.numthreads} threads")
         self.statistics.update({'feeds': len(feeds_urls)})
        
         index_threads = []
