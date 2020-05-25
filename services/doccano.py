@@ -20,6 +20,8 @@ from services.elastic import Service as elasticService
 import services.utils as util
 
 alphabet = string.ascii_letters + string.digits
+admin_username = 'admin'
+
 # https://github.com/doccano/doccano
 # https://github.com/afparsons/doccano_api_client
 
@@ -29,6 +31,7 @@ class Service:
         self.logging = logging 
         self.config = config['doccano'].copy()
         self.index = index 
+        self.mongo_tasks = mongodb['tasks']
         self.mongo_users = mongodb['users']
         self.mongo_projects = mongodb['projects']
         login = self.config['login']
@@ -50,7 +53,14 @@ class Service:
         self.logging.info(f"get_user '{username}': {user}")
         return user
 
-    def sync_with_mongodb(self, task:dict):
+    def sync_project_documents(self, task:dict):
+        # list doccano documents
+        self.logging.info(task)
+        res = self.django_client.documents.all()
+        self.logging.info(f"django_client.documents: {res}")
+
+
+    def sync_projects_users(self, task:dict):
         threads = [self.executor.submit(self._sync_projects_with_mongodb), self.executor.submit(self._sync_users_with_mongodb)]
         for _t in threads:
             _t.result()
@@ -82,17 +92,29 @@ class Service:
     def _sync_projects_with_mongodb(self):
         # list doccano projects
         res = self.django_client.projects.all()
+        # flag for removal
+        self.mongo_projects.update_many({}, {"$set":{"remove":True}})
         for prj_id in res['ids']:
             query = {"id": prj_id}
             project = self.django_client.projects.get(prj_id).get('details',{})
-            project.update(query)
+            project.update({"id":prj_id, "remove":False})
             if self.mongo_projects.count_documents(query) <= 0:
-                ## add in mongodb
+                ## add task in mongodb
+                task = util.merge_default_task_config(self, {'type':'doccano', 'name':project['name'], 'projectid': prj_id})
+                util.set_user_task(self, admin_username, task)  
+                ## add project in mongodb
                 self.mongo_projects.insert_one(project)
                 self.logging.info(f"Project added '{project.get('name',prj_id)}'")
             else:
+                ## update task in mongodb
+                task = util.merge_default_task_config(self, {'type':'doccano', 'name':project['name'], 'projectid': prj_id})
+                util.set_user_task(self, admin_username, task)  
+                ## update project in mongodb
                 self.mongo_projects.update_one(query, {"$set": project})
                 self.logging.info(f"Project updated '{project.get('name',prj_id)}'")
+        # handle removed projects
+        # TODO remove related TASKS TOO!
+        self.mongo_projects.delete_many({"remove":True})
 
     def get_user_projects(self, user_id:str):
         return self.executor.submit(self._get_user_projects, user_id).result()
@@ -103,6 +125,14 @@ class Service:
         self.logging.info(res)
         return res
 
+
+
+
+
+
+
+
+    ### ============================ REMOVER ==================
     def get_label_list(self, project_id):
         return self.executor.submit(self._get_label_list, project_id).result()
 

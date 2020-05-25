@@ -25,14 +25,17 @@ class Service:
         self.mongo_users = mongodb['users']
         self.mongo_projects = mongodb['projects']
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=maxtasks+1, thread_name_prefix='Scheduler')
+        self.logging.info(f"Scheduler service started  [{maxtasks} tasks]")
+
+    def start(self):
         self.executor.submit(self.reset_tasks).result()
         self.executor.submit(self.handle_tasks)
-        self.logging.info(f"Scheduler service started  [{maxtasks} tasks]")
 
     def statistics(self):
         return 'TODO'
 
     def reset_tasks(self):
+        # set all tasks as NOT running
         curr_time = int(time.time())
         query = {"enabled":True, "running":True}
         self.mongo_tasks.update_many(query, {"$set":{"running":False}})
@@ -59,31 +62,29 @@ class Service:
             username = util.getTaskUser(task)
             self.logging.info(f"Running task '{util.getTaskName(task)}' @ '{username}'")
             user = self.mongo_users.find_one({'username': username})
-            task = self.merge_default_task_config(task)
+            task = util.merge_default_task_config(self, task)
             task.update({"user":user})
 
-            # INDEX RSS FEEDS
+            # INDEX TASKS
             if task['type'] == 'rss':
                 rssService = rss.Service(self.logging, task, self.index)
-                #_result = rssService.index_feeds(indices, task.get('threads',0)) ## limiting number of feeds urls to the number of threads for fast testing
                 _result = rssService.index_feeds()
-            # INDEX STOCK SYMBOLS
+            
             elif task['type'] == 'stock':
                 stockService = stock.Service(self.logging, task, self.index)
                 exchangeCodes = task.get('exchanges', [])
                 if len(exchangeCodes) == 0:
                     exchangeCodes = stockService.list_exchange_codes()
                 stockService.index_stocks_symbols(exchangeCodes)
-            # DOCCANO DATA SYNC
+            
+            # DOCCANO
             elif task['type'] == 'doccano':
-                self.doccano.sync_idol_with_doccano(task) 
-            # MODEL TRAINING
-            elif task['type'] == 'spacynlp':
-                spacyService = spacynlp.Service(self.logging, self.config, self.index)
+                self.doccano.sync_project_documents(task) 
+                #spacyService = spacynlp.Service(self.logging, self.config, self.index)
                 #spacyService.train_project_model(_task)
-            ## SYSTEM ADMIN TASKS
-            elif task['type'] == 'sync_doccano_with_mongodb':
-                self.doccano.sync_with_mongodb(task)
+
+            elif task['type'] == 'sync_projects_users':
+                self.doccano.sync_projects_users(task)
 
         except Exception as error:
             self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")
@@ -96,9 +97,3 @@ class Service:
             }
             if error != None: update['error'] = error
             self.mongo_tasks.update_one({'_id': task['_id']}, {"$set": update})
-
-    def merge_default_task_config(self, task:dict):
-        _task = self.config.get('user_tasks',{}).get(task.get('type','default'),{}).copy()
-        _task.update(task)
-        return _task
-            

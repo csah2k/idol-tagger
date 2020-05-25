@@ -33,9 +33,8 @@ class Service:
         self.executor.shutdown()
         
     def _index_feeds(self, max_feeds=0):
-        self.logging.info(f"RSS indextask '{self.config.get('name')}'")
         start_time = time.time()
-        filename = self.config.get('feeds', 'data/feeds')
+        filename = self.config.get('feeds', 'data/feeds') # TODO salvar/ler lista de feeds no mongodb
         feeds_file = open(filename, 'r') 
         Lines = feeds_file.readlines() 
         feeds_urls = set()  ## a set assures to no have duplicated url's
@@ -48,7 +47,7 @@ class Service:
         random.shuffle(feeds_urls) ## shuffle to avoid flood same domain with all threads at same time
         if max_feeds <= 0: max_feeds = len(feeds_urls)
         feeds_urls = feeds_urls[:max_feeds]
-        self.logging.info(f"Crawling {len(feeds_urls)} urls using {self.numthreads} threads")
+        self.logging.info(f"RSS indextask '{self.config.get('name')}': Crawling {len(feeds_urls)} urls using {self.numthreads} threads")
         self.statistics.update({'feeds': len(feeds_urls)})
        
         index_threads = []

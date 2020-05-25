@@ -5,7 +5,9 @@
         "maxtasks": 4,
         "mongodb": "mongodb://localhost:27017/",
         "database": "index-flow",
-        "storage": "./data"
+        "storage": "./data",
+        "host": "0.0.0.0",
+        "port": 8081
     },
     
     "elastic": {
@@ -36,28 +38,33 @@
 
     "admin_tasks":[
         {
-            "name": "Sync between Doccano & MongoDB",
-            "type": "sync_doccano_with_mongodb",
+            "name": "Sync users&projects between Doccano & MongoDB",
+            "type": "sync_projects_users",
             "enabled": true,
-            "startrun": false,
+            "startrun": true,
             "interval": 120
         }
     ],
 
+
     "user_tasks":{ 
         "doccano":{
-            "enabled": false,
-            "startrun": false,
+            "name": "Sync docs: Elastic -> Doccano -> MongoDB",
+            "type": "doccano",
+            "projectid": "0",
+            "enabled": true,
             "interval": 600,
-            "maxremaining": 500
+            "maxremaining": 100,
+            "query": {
+                "match_all": {}
+            }
         },
         "rss": {
             "type": "rss",
             "name": "RSS Feeds",
             "enabled": false,
-            "startrun": false,
             "filters": false,
-            "interval": 60,
+            "interval": 300,
             "threads": 5,
             "feeds": "data/feeds.rss"
         },
@@ -65,7 +72,6 @@
             "name": "Empresas nas bolsas US e BR",
             "type": "stock",
             "enabled": false,
-            "startrun": false,
             "interval": 604800,
             "threads": 2,
             "database": "BUSINESS",
@@ -95,14 +101,9 @@
             "filters": true,
             "feeds": "data/feeds.rss"
         }
-    },
-
-    "default_project": {
-        "enabled": false,
-        "query": {
-            "match_all": {}
-        }
     }
+
+   
         
     
 }

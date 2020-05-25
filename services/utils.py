@@ -1,7 +1,12 @@
 import os
+import time
+import json
 import html
 import html2text
+from bson import ObjectId
 from requests.structures import CaseInsensitiveDict
+from bson import Binary, Code
+from bson.json_util import dumps
 
 FIELDPREFIX_FILTER = 'FILTERINDEX'
 FIELDSUFFIX_TAGGED = '_TAGGED'
@@ -46,6 +51,28 @@ def getTaskName(task:dict):
 def getTaskUser(task:dict):
     return task.get('user',{}).get('username',task.get('username','-'))
 
+def merge_default_task_config(self, task:dict):
+    _task = self.config.get('user_tasks',{}).get(task.get('type','default'),{}).copy()
+    _task.update(task)
+    return _task
+
+def set_user_task(self, username:str, task:dict):
+    query = {"username": username, "name":task.get('name','')}
+    task.update(query)
+    task.update({
+        "lastruntime": 0,
+        "nextruntime": 0 if task.get('startrun',False) else int(time.time())+task.get('interval',60),
+        "running": False,
+        "error": None
+    })
+    if self.mongo_tasks.count_documents(query) <= 0:
+        self.mongo_tasks.insert_one(task)
+        self.logging.info(f"Task added: '{getTaskName(task)}' @ '{username}'")
+    else:
+        self.mongo_tasks.update_one(query, {"$set": task})
+        self.logging.info(f"Task updated '{getTaskName(task)}' @ '{username}'")
+    return task
+
 def getDocFilters(doc):
     #references = doc.get(f'{FIELDPREFIX_FILTER}_REFS', [])
     #dbname = doc.get(f'{FIELDPREFIX_FILTER}_DBS', [])
@@ -74,3 +101,6 @@ def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False)
         if trunc: open(target_file, 'w').close()
         if delt and os.path.exists(target_file): os.remove(target_file)
         return target_file, target_folder, os.path.basename(target_file)
+
+def dump_json(dic:dict):
+    return dumps(dic)
