@@ -19,7 +19,7 @@ References:
 
 >sudo apt install git python3 python3-pip docker-compose
 
->pip3 install spacy dataset feedparser html2text retrying plac elasticsearch pymongo
+>pip3 install spacy feedparser html2text retrying plac elasticsearch pymongo sqlite3 django-admin-client
 
 >python3 -m spacy download en_core_web_sm<br/>
 python3 -m spacy download pt_core_news_sm<br/>

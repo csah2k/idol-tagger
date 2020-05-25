@@ -52,7 +52,7 @@ class Service:
         index_threads = []
         for _url in feeds_urls:
             index_threads.append(
-                self.executor.submit(self.index_feed, self.config['indices'], _url, 
+                self.executor.submit(self.index_feed, _url, 
                     self.executor.submit(self.get_feed_from_url, _url).result())) 
 
         total_process_docs = 0
@@ -68,15 +68,16 @@ class Service:
         self.logging.info(f"RSS indextask '{self.config.get('name')}' finished: {self.statistics}")
         return self.statistics
 
-    def index_feed(self, indices, feed_url, feed):
+    def index_feed(self, feed_url, feed):
         try:
-            return self._index_feed(indices, feed_url, feed)
+            return self._index_feed(feed_url, feed)
         except Exception as error:
             self.logging.error(f"RSS_URL: {feed_url} | {str(error)}")
             return { 'url': feed_url, 'error': str(error) }
 
-    def _index_feed(self, indices, feed_url, feed):      
+    def _index_feed(self, feed_url, feed):      
         total_indexed_docs = 0
+        indices = self.config['user']['indices']
         for _e in feed.entries:
             link = None
             try:
@@ -87,7 +88,7 @@ class Service:
                 content = util.cleanText(_e.get('summary', _e.get('description', _e.get('text',''))))
                 title = util.cleanText(_e.get('title', _e.get('titulo', _e.get('headline', content)))) # TODO truncate big titles
 
-                if self.config.get('filters', False):
+                if self.config.get('filters', False): # TODO ser possivel escolher quais filtros aplicar
                     filterHits = self.index.search_filters(content, indices['filters'])
 
                 if not self.config.get('filters', False) or len(filterHits) > 0:

@@ -3,11 +3,14 @@ from __future__ import unicode_literals, print_function
 import sys
 import time
 import json
-import hashlib 
+
 import logging
-import services.scheduler as sched
+import services.elastic as elastic
+import services.doccano as doccano
+import services.scheduler as scheduler
 from requests.structures import CaseInsensitiveDict
 from pymongo import MongoClient
+
 
 # TODO - add twitter source   
 # https://python-twitter.readthedocs.io/en/latest/getting_started.html
@@ -18,64 +21,59 @@ from pymongo import MongoClient
 
 # TODO - add metafields manual addition in index tasks configuration
 
+# TODO - service statistics
+#self.statistics = sqlite3.connect(dbfile, check_same_thread=False)
+#self.statistics.cursor().execute("create table tasks_executions (id, username, type, execution_time, elapsed_seconds, total_scanned, total_indexed)")
+
+
 class Service:
     
     def __init__(self, logging, config): 
+        logging.info("============================ Starting index-flow service =================================")
         self.logging = logging 
         self.config = config
         # database setup
-        self.mongo = MongoClient(config['service']['mongodb'])
-        self.mongodb = self.mongo['index-flow']
-        self.users_profiles = self.mongodb['users_profiles']
-        self.profiles_tasks = self.mongodb['profiles_tasks']
+        self.mongodb = MongoClient(config['service']['mongodb'])[config['service']['database']]
+        self.mongo_tasks = self.mongodb['tasks']
+        self.mongo_users = self.mongodb['users']
+        self.mongo_projects = self.mongodb['projects']
+        # core services setup
+        self.index = elastic.Service(self.logging, self.config)
+        self.doccano = doccano.Service(self.logging, self.config, self.mongodb, self.index)
+        self.scheduler = scheduler.Service(self.logging, self.config, self.mongodb, self.doccano, self.index)
 
     def start(self):
-        self.logging.info("============================ Starting index-flow service =================================")
-        self.logging.debug(self.config)        
-
-
         # tasks scheduler setup
-        schedService = sched.Service(self.logging, self.config, self.mongodb)
-        schedService.scheduleAllProfilesTasks()
+        self.setup_admin_usertasks()
+        self.scheduler.schedule_all_users_tasks()
 
         # MOCK
-        #self.setUserProfile("cassio.sa@gmail.com")
-        #self.addUserTask("cassio.sa@gmail.com", self.config['TEST_indextasks']['rss'])
+        #self.get_user_profile("cassio")
+        #self.doccano.sync_with_mongodb()
+        #self.doccano.get_user_projects("cassio")
+        #self.doccano.sync_user_projects("csah2k")
+        #self.add_user_task("csah2k", self.config['TEST_indextasks']['rss'])
 
 
         while True:
-            self.logging.info("Collecting statistics...")
-            _statistics = schedService.statistics()
+            #statistics = self.scheduler.statistics()
+            #self.logging.info(f"scheduler statistics: {statistics}")
             # TODO save the statistics somewhere
-            time.sleep(30)
+            time.sleep(60)
 
-    def addUserTask(self, login:str, task:dict):
-        query = {"login": login}
+    def add_user_task(self, username:str, task:dict):
+        query = {"username": username}
         task.update(query)
-        self.profiles_tasks.insert_one(task)
-        self.logging.info(task)
-        self.logging.info(f"Task added: {str(task['_id'])} @ {login}")
+        self.mongo_tasks.insert_one(task)
+        self.logging.info(f"Task added: {str(task['_id'])} @ {username}")
 
-    def setUserProfile(self, login:str, profile={}):
-        query = {"login": login}
-        profile.update(query)
-        user_profile = self.config['default_profile'].copy()
-        user_profile.update(profile)
-        if self.users_profiles.count_documents(query) <= 0:
-            # generate indexes names
-            user_profile.update({
-                "indices": {
-                    "indexdata": str(hashlib.md5(("indexdata"+login).encode())).lower(),
-                    "filters": str(hashlib.md5(("filters"+login).encode())).lower(),
-                }
-            })
-            self.logging.info(user_profile)
-            self.users_profiles.insert_one(user_profile)
-            self.logging.info(f"Profile added '{login}'")
-        else:
-            self.logging.info(user_profile)
-            self.users_profiles.update_one(query, {"$set": user_profile})
-            self.logging.info(f"Profile updated '{login}'")
+    def setup_admin_usertasks(self, username='admin'):
+        query = {"username":username}
+        self.mongo_tasks.delete_many(query)
+        tasks = self.config.get('admin_tasks',[])
+        for task in tasks:
+            task.update(query)
+            self.mongo_tasks.insert_one(task)   
 
 
 def main():

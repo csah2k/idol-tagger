@@ -125,7 +125,7 @@ class Service:
 
     def _create_index(self, index:str, filtr=False):
         if not self.elastic.indices.exists(index):
-            self.logging.info(f"creating index: {index}")
+            self.logging.debug(f"creating index: {index}")
             body = {
                 "settings" : {
                     "number_of_shards" : 1,
@@ -154,6 +154,7 @@ class Service:
                 }
             try:
                 res = self.elastic.indices.create(index, body=body)
+                self.logging.debug(f"create_index response: {res}")
                 return res
             except Exception as error:
                 self.logging.error(f"ElasticService: {error}")

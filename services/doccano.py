@@ -1,42 +1,108 @@
 
 import os
+import re
 import json
 import codecs
+import string
+import hashlib 
+import secrets
 import logging
 import datetime
 import itertools
 import operator
 import concurrent.futures
+import urllib.parse
+import django_admin_client
 from retrying import retry
 from doccano_api_client import DoccanoClient
 from requests.structures import CaseInsensitiveDict
-
 from services.elastic import Service as elasticService
 import services.utils as util
 
+alphabet = string.ascii_letters + string.digits
 # https://github.com/doccano/doccano
 # https://github.com/afparsons/doccano_api_client
 
 class Service:
 
-    def __init__(self, logging, config, index:elasticService): 
+    def __init__(self, logging, config, mongodb, index:elasticService): 
         self.logging = logging 
-        self.config = config.get('doccano').copy()
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 4), thread_name_prefix='DoccanoPool')
+        self.config = config['doccano'].copy()
         self.index = index 
-        login = self.config.get('login')
-        self.doccano_login(self.config.get('url'), login.get('username'), login.get('password'))
+        self.mongo_users = mongodb['users']
+        self.mongo_projects = mongodb['projects']
+        login = self.config['login']
+        numthreads = self.config.get('threads',2)
+        djangourl = urllib.parse.urljoin(self.config['url'], 'admin')
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=numthreads, thread_name_prefix='DoccanoPool')
+        self.doccano_client = DoccanoClient(self.config['url'], login['username'], login['password']) ## TODO isso tem que sair, usar apenas o Django 
+        self._django_client = django_admin_client.DjangoAdminBase(djangourl, login['username'], login['password'])
+        self.django_client = django_admin_client.DjangoAdminDynamic(spec=self._django_client.generate_spec(), client=self._django_client)
+        self.logging.info(f"Doccano service started: {login['username']} @ {djangourl} [{numthreads} threads]")
+ 
 
-    def doccano_login(self, url, username, password):
-        return self.executor.submit(self._doccano_login, url, username, password).result()
+    def get_user(self, username:str):    
+        return self.executor.submit(self._get_user, username).result()
 
-    def _doccano_login(self, url, username, password):
-        self.doccano_client = DoccanoClient(url, username, password)
-        r_me = self.doccano_client.get_me().json()
-        self.logging.debug(f"Doccano login: {r_me}")
-        if not r_me.get('is_superuser'):
-            self.logging.warn(f"User {username} is not a super-user!")
-        return self.doccano_client
+    def _get_user(self, username:str):
+        query = {"username": username}
+        user = self.mongo_users.find_one(query)
+        self.logging.info(f"get_user '{username}': {user}")
+        return user
+
+    def sync_with_mongodb(self, task:dict):
+        self.logging.info("====== sync doccano with mongodb =====")
+        threads = [self.executor.submit(self._sync_projects_with_mongodb), self.executor.submit(self._sync_users_with_mongodb)]
+        for _t in threads:
+            _t.result()
+
+    def _sync_users_with_mongodb(self):
+        # list doccano users
+        res = self.django_client.users.all()
+        for user_id in res['ids']:
+            query = {"id": user_id}
+            user = self.django_client.users.get(user_id).get('details',{})
+            user.update(query)
+            if self.mongo_users.count_documents(query) <= 0:
+                # generate indexes names
+                user.update({
+                    "indices": {
+                        "indexdata": str(hashlib.md5(("indexdata"+user.get('username',user_id)).encode("utf-8")).hexdigest()).lower(),
+                        "filters": str(hashlib.md5(("filters"+user.get('username',user_id)).encode()).hexdigest()).lower(),
+                    }
+                })
+                ## add user indicies in Elastic Server
+                self.index.initIndices(user['indices'])
+                ## add in mongodb
+                self.mongo_users.insert_one(user)
+                self.logging.info(f"User added '{user.get('name',user_id)}'")
+            else:
+                self.mongo_users.update_one(query, {"$set": user})
+                self.logging.info(f"User updated '{user.get('name',user_id)}'")
+
+    def _sync_projects_with_mongodb(self):
+        # list doccano projects
+        res = self.django_client.projects.all()
+        for prj_id in res['ids']:
+            query = {"id": prj_id}
+            project = self.django_client.projects.get(prj_id).get('details',{})
+            project.update(query)
+            if self.mongo_projects.count_documents(query) <= 0:
+                ## add in mongodb
+                self.mongo_projects.insert_one(project)
+                self.logging.info(f"Project added '{project.get('name',prj_id)}'")
+            else:
+                self.mongo_projects.update_one(query, {"$set": project})
+                self.logging.info(f"Project updated '{project.get('name',prj_id)}'")
+
+    def get_user_projects(self, user_id:str):
+        return self.executor.submit(self._get_user_projects, user_id).result()
+
+    def _get_user_projects(self, user_id:str):
+        doccano_user_id = self.django_client.users.find(user_id)
+        res = self.doccano_projects.find( { 'users': [user_id] } )
+        self.logging.info(res)
+        return res
 
     def get_label_list(self, project_id):
         return self.executor.submit(self._get_label_list, project_id).result()

@@ -4,6 +4,7 @@
         "loglevel": "INFO",
         "maxtasks": 4,
         "mongodb": "mongodb://localhost:27017/",
+        "database": "index-flow",
         "storage": "./data"
     },
     
@@ -24,6 +25,7 @@
     },
 
     "doccano":{
+        "threads": 4,
         "tempfolder": "data",
         "url": "http://localhost:8000",
         "login":{
@@ -32,7 +34,16 @@
         }
     },
 
-    "tasks":{
+    "admin_tasks":[
+        {
+            "type": "sync_doccano",
+            "enabled": true,
+            "startrun": false,
+            "interval": 300
+        }
+    ],
+
+    "user_tasks":{ 
         "doccano":{
             "enabled": false,
             "startrun": false,
@@ -65,14 +76,6 @@
         }
     },
 
-    "default_profile":{
-        "login": "user@email.com",
-        "roles": ["admin","user"],
-        "indices": {
-            "indexdata": "data",
-            "filters": "filtr"
-        }
-    },
 
     "TEST_indextasks": {
         "stock": {

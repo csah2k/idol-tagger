@@ -3,29 +3,27 @@ import time
 import sched
 import sqlite3
 import concurrent.futures
-import services.elastic as elastic
 import services.rss as rss
 import services.stock as stock
-import services.doccano as doccano
 import services.spacynlp as spacynlp
 import services.utils as util
 from retrying import retry
 from bson.objectid import ObjectId
-
+from services.elastic import Service as elasticService
+from services.doccano import Service as doccanoService
 class Service:
     
-    def __init__(self, logging, config, mongodb): 
+    def __init__(self, logging, config, mongodb, doccano:doccanoService, index:elasticService): 
         maxtasks = config['service']['maxtasks']
-        #dbfile = util.getDataFilename(config['service'], 'statistics', None, 'db')
         self.logging = logging 
         self.config = config
-        self.users_profiles = mongodb['users_profiles']
-        self.profiles_tasks = mongodb['profiles_tasks']
-        self.index = elastic.Service(logging, config)
+        self.doccano = doccano
+        self.index = index 
+        self.mongo_tasks = mongodb['tasks']
+        self.mongo_users = mongodb['users']
+        self.mongo_projects = mongodb['projects']
         self.db = sqlite3.connect(':memory:', check_same_thread=False)
-        self.db.cursor().execute("create table running_tasks (id, login, interval, lastruntime)")
-        #self.statistics = sqlite3.connect(dbfile, check_same_thread=False)
-        #self.statistics.cursor().execute("create table tasks_executions (id, login, type, execution_time, elapsed_seconds, total_scanned, total_indexed)")
+        self.db.cursor().execute("create table running_tasks (id, username, interval, lastruntime)")
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=maxtasks+1, thread_name_prefix='Scheduler')
         self.executor.submit(self.handle_tasks)
         self.logging.info(f"Scheduler service started: {maxtasks} maximum tasks")
@@ -37,12 +35,12 @@ class Service:
     def handle_tasks(self):
         try:
             curr_time = int(time.time())
-            cur = self.db.cursor().execute("select id, login from running_tasks where ( ? - lastruntime ) > interval", (curr_time, ))
+            cur = self.db.cursor().execute("select id, username from running_tasks where ( ? - lastruntime ) > interval", (curr_time, ))
             for row in cur.fetchall():
                 self.logging.info(f"Running task '{row[0]}' @ '{row[1]}'")
                 # get user & task updated metadata
-                task = self.profiles_tasks.find_one({'_id': ObjectId(row[0])})
-                profile = self.users_profiles.find_one({'login': row[1]})
+                task = self.mongo_tasks.find_one({'_id': ObjectId(row[0])})
+                profile = self.mongo_users.find_one({'username': row[1]})
                 task.update(profile)
                 # merge the user settings with the default config
                 dft_cfg = self.config['tasks'][task.get('type')].copy()
@@ -69,10 +67,12 @@ class Service:
                 if len(exchangeCodes) == 0:
                     exchangeCodes = stockService.list_exchange_codes()
                 stockService.index_stocks_symbols(exchangeCodes)
-            # DOCCANO SYNC
+            # DOCCANO DATA SYNC
             elif task['type'] == 'doccano':
-                doccanoService = doccano.Service(self.logging, self.config, self.index)
-                #doccanoService.sync_idol_with_doccano(task)
+                self.doccano.sync_idol_with_doccano(task)
+            # DOCCANO USERS/PROJECTS SYNC
+            elif task['type'] == 'sync_doccano':
+                self.doccano.sync_with_mongodb(task)
             # MODEL TRAINING
             elif task['type'] == 'spacynlp':
                 spacyService = spacynlp.Service(self.logging, self.config, self.index)
@@ -80,24 +80,22 @@ class Service:
         except Exception as error:
             self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")
 
+    def schedule_all_users_tasks(self):
+        self.executor.submit(self._schedule_all_users_tasks)
 
-    def scheduleAllProfilesTasks(self):
-        self.executor.submit(self._scheduleAllProfilesTasks)
+    def _schedule_all_users_tasks(self):
+        for user in self.mongo_users.find():
+            self._schedule_user_tasks(user)    
 
-    def _scheduleAllProfilesTasks(self):
-        for profile in self.users_profiles.find():
-            self._scheduleProfileTasks(profile['login'])    
+    def schedule_user_tasks(self, user:dict):
+        self.executor.submit(self._schedule_user_tasks, user)
 
-    def scheduleProfileTasks(self, login:str):
-        self.executor.submit(self._scheduleProfileTasks, login)
-
-    def _scheduleProfileTasks(self, login:str):
-        profile = self.users_profiles.find_one({'login': login})
-        for task in self.profiles_tasks.find({"login": login}):
-            _task = self.config['tasks'][task.get('type')].copy()
-            _task.update(profile)
+    def _schedule_user_tasks(self, user:dict):
+        for task in self.mongo_tasks.find({"username": user['username']}):
+            _task = self.config.get('user_tasks',{}).get(task.get('type'),{}).copy()
+            _task.update({"user":user})
             _task.update(task)
-            curr_time = 0 if task.get('startrun',False) else int(time.time())
-            self.logging.info(f"Scheduling '{_task.get('name')}' next run in {_task['interval']} seconds")
-            self.db.cursor().execute("insert into running_tasks values (?, ?, ?, ?)", (str(_task['_id']), login, _task['interval'], curr_time))            
+            curr_time = 0 if _task.get('startrun',False) else int(time.time())
+            self.logging.info(f"Scheduling task '{_task.get('name',_task['_id'])}' @ '{user['username']}' next run in {_task['interval']} seconds")
+            self.db.cursor().execute("insert into running_tasks values (?, ?, ?, ?)", (str(_task['_id']), user['username'], _task['interval'], curr_time))            
             
