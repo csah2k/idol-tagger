@@ -5,7 +5,10 @@ import services.core as core
 from pymongo import MongoClient
 from flask import Flask, request, jsonify, Response
 from requests.structures import CaseInsensitiveDict
-
+from services.utils import getLogLvl
+config = {}
+app = Flask(__name__)
+coreService:core.Service = None
 
 # TODO - add twitter source   
 # https://python-twitter.readthedocs.io/en/latest/getting_started.html
@@ -20,17 +23,14 @@ from requests.structures import CaseInsensitiveDict
 #self.statistics = sqlite3.connect(dbfile, check_same_thread=False)
 #self.statistics.cursor().execute("create table tasks_executions (id, username, type, execution_time, elapsed_seconds, total_scanned, total_indexed)")
 
+with open('config.json') as json_configfile:
+    config = CaseInsensitiveDict(json.load(json_configfile))
 
-config = {}
-app = Flask(__name__)
-coreService:core.Service = None
+logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=getLogLvl(config), handlers=[logging.FileHandler(config.get('service',{}).get('logfile','service.log'), 'w', 'utf-8')])
+logging.getLogger('elasticsearch').setLevel(logging.ERROR)
 
-@app.before_first_request
-def start_core_service():
-    # main service startup
-    global coreService
-    coreService = core.Service(logging, config)
-    coreService.start()
+coreService = core.Service(logging, config)
+coreService.start()
 
 @app.route("/tasks/<username>", methods = ['GET','POST'])
 def tasks(username:str):
@@ -42,18 +42,28 @@ def tasks(username:str):
     return Response(response=ret, status=200, mimetype="application/json")
 
 
-def getLogLvl(cfg):
-    lvl = cfg.get('service',{}).get('loglevel', 'INFO').strip().upper()
-    loglvl = logging.INFO if lvl == 'INFO' else None
-    if loglvl == None: loglvl = logging.DEBUG if lvl == 'DEBUG' else None
-    if loglvl == None: loglvl = logging.WARN if lvl == 'WARN' else None
-    if loglvl == None: loglvl = logging.WARNING if lvl == 'WARNING' else None
-    if loglvl == None: loglvl = logging.ERROR if lvl == 'ERROR' else None
-    if loglvl == None: loglvl = logging.FATAL if lvl == 'FATAL' else None
-    return loglvl
+@app.route("/projects/<username>", methods = ['GET','POST'])
+def projects(username:str):
+    ret = {}
+    if request.method == 'POST':
+        ret = {} ## TODO
+    elif request.method == 'GET':
+        ret = coreService.get_user_projects(username)
+    return Response(response=ret, status=200, mimetype="application/json")
+
+@app.route("/indices/<username>", methods = ['GET','POST'])
+def indices(username:str):
+    ret = {}
+    if request.method == 'POST':
+        ret = {} ## TODO
+    elif request.method == 'GET':
+        ret = coreService.get_user_indices(username)
+    return Response(response=ret, status=200, mimetype="application/json")
+
 
 
 if __name__ == "__main__":
+    # DEV FLASK SELF-STARTUP
     with open('config.json') as json_configfile:
         config = CaseInsensitiveDict(json.load(json_configfile))
     # logging setup
@@ -62,6 +72,6 @@ if __name__ == "__main__":
 
     host = config.get('service',{}).get('host','0.0.0.0')
     port = config.get('service',{}).get('port',8080)
-    app.run(debug=False, use_reloader=False, host=host, port=port, threaded=False)
+    app.run(debug=False, use_reloader=False, host=host, port=port, threaded=True)
 
     

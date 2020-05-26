@@ -31,15 +31,16 @@ class Service:
 
     def __init__(self, logging, config:dict): 
         self.logging = logging
-        self.config = config.get('elastic').copy()
+        self.config = config
+        self.cfg = config.get('elastic').copy()
         self.lock = threading.Lock()
         self.index_queues = {}
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 2), thread_name_prefix='ElasticPool')
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.cfg.get('threads', 2), thread_name_prefix='ElasticPool')
         self.executor.submit(self.initService).result()
     
     def initService(self):
         try:
-            self.elastic = Elasticsearch([self.config.get('api')])
+            self.elastic = Elasticsearch([self.cfg.get('api')])
             self.inf = self.elastic.info() 
             self.logging.info(f"Connected to Elastic Server [cluster_name: '{self.inf['cluster_name']}', version: {self.inf['version']['number']}]")
             self._create_pipelines()
@@ -47,7 +48,12 @@ class Service:
         except Exception as error:
             self.logging.error(f"ElasticService: {error}")
             return False
-        
+    
+    def indices_status(self, indices:dict):
+        return self.executor.submit(self._indices_status, indices).result()
+
+    def _indices_status(self, indices:dict):  
+        return self.elastic.indices.stats(','.join([v for k,v in indices.items()]))
         
     def initIndices(self, indices:dict):   
         return self.executor.submit(self._initIndices, indices).result()

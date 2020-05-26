@@ -1,6 +1,8 @@
 import os
 import time
 import json
+import string
+import logging
 #import psutil
 #import threading
 import html
@@ -10,6 +12,8 @@ from requests.structures import CaseInsensitiveDict
 from bson import Binary, Code
 from bson.json_util import dumps
 
+ALPHABET = string.ascii_letters + string.digits
+ADMIN_USERNAME = 'admin'
 FIELDPREFIX_FILTER = 'FILTERINDEX'
 FIELDSUFFIX_TAGGED = '_TAGGED'
 FIELDSUFFIX_TRAINED = '_TRAINED'
@@ -59,11 +63,14 @@ def merge_default_task_config(self, task:dict):
     return _task
 
 def set_user_task(self, username:str, task:dict):
-    query = {"username": username, "name":getTaskName(task)}
-    task.update(query)
-    task = merge_default_task_config(self, task)
+    query = None
     if task.get('_id', None) != None:
         query = {'_id': ObjectId(task['_id'])}
+    elif username == ADMIN_USERNAME: # id is not necessary for admin tasks
+        query = {"username": username, "name":getTaskName(task)}
+    
+    task.update({"username": username})
+    task = merge_default_task_config(self, task)
     task.update({
         "nextruntime": 0 if task.get('startrun',False) else int(time.time())+task.get('interval',60),
         "lastruntime": task.get('lastruntime', 0),
@@ -72,16 +79,20 @@ def set_user_task(self, username:str, task:dict):
         "running": task.get('running', False),
         "error": task.get('error', None)
     })
-    if self.mongo_tasks.count_documents(query) <= 0:
+
+    if query == None or self.mongo_tasks.count_documents(query)<=0:      
+        # new user task   
         task['_id'] = self.mongo_tasks.insert_one(task).inserted_id
         self.logging.info(f"Task added: '{getTaskName(task)}' @ '{username}'")
         return task
     else:
+        # existing user task, or any admin task
         _task = task.copy()
         _task.pop('_id', None)
         self.mongo_tasks.update_one(query, {"$set": _task})
         self.logging.info(f"Task updated '{getTaskName(task)}' @ '{username}'")
         return task
+
     
 
 def getDocFilters(doc):
@@ -115,6 +126,16 @@ def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False)
 
 def dump_json(dic:dict):
     return dumps(dic)
+
+def getLogLvl(cfg):
+    lvl = cfg.get('service',{}).get('loglevel', 'INFO').strip().upper()
+    loglvl = logging.INFO if lvl == 'INFO' else None
+    if loglvl == None: loglvl = logging.DEBUG if lvl == 'DEBUG' else None
+    if loglvl == None: loglvl = logging.WARN if lvl == 'WARN' else None
+    if loglvl == None: loglvl = logging.WARNING if lvl == 'WARNING' else None
+    if loglvl == None: loglvl = logging.ERROR if lvl == 'ERROR' else None
+    if loglvl == None: loglvl = logging.FATAL if lvl == 'FATAL' else None
+    return loglvl
 
 '''
 def get_curr_thread_cpu_percent(interval=0.1):

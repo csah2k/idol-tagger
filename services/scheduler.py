@@ -80,12 +80,19 @@ class Service:
             
             # DOCCANO
             elif task['type'] == 'doccano':
-                self.doccano.sync_project_documents(task) 
+                self.doccano.import_from_index(task)
+                #self.doccano.generate_training_data(task) 
                 #spacyService = spacynlp.Service(self.logging, self.config, self.index)
-                #spacyService.train_project_model(_task)
+                #spacyService.train_project_model(task)
 
-            elif task['type'] == 'sync_projects_users':
-                self.doccano.sync_projects_users(task)
+            elif task['type'] == 'sync_documents':
+                self.doccano.sync_documents_with_mongodb() 
+            
+            elif task['type'] == 'sync_annotations':
+                self.doccano.sync_annotations_with_mongodb()
+
+            elif task['type'] == 'sync_projects_users_labels':
+                self.doccano.sync_projects_users_labels()
 
         except Exception as error:
             self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")

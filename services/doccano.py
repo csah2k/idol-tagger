@@ -3,9 +3,7 @@ import os
 import re
 import json
 import codecs
-import string
 import hashlib 
-import secrets
 import logging
 import datetime
 import itertools
@@ -19,8 +17,7 @@ from requests.structures import CaseInsensitiveDict
 from services.elastic import Service as elasticService
 import services.utils as util
 
-alphabet = string.ascii_letters + string.digits
-admin_username = 'admin'
+
 
 # https://github.com/doccano/doccano
 # https://github.com/afparsons/doccano_api_client
@@ -29,20 +26,75 @@ class Service:
 
     def __init__(self, logging, config, mongodb, index:elasticService): 
         self.logging = logging 
-        self.config = config['doccano'].copy()
+        self.config = config
+        self.cfg = config['doccano'].copy()
         self.index = index 
         self.mongo_tasks = mongodb['tasks']
         self.mongo_users = mongodb['users']
+        self.mongo_labels = mongodb['labels']
         self.mongo_projects = mongodb['projects']
-        login = self.config['login']
-        numthreads = self.config.get('threads',2)
-        djangourl = urllib.parse.urljoin(self.config['url'], 'admin')
+        self.mongo_documents = mongodb['documents']
+        self.mongo_document_annotations = mongodb['document_annotations']
+        login = self.cfg['login']
+        numthreads = self.cfg.get('threads',2)
+        djangourl = urllib.parse.urljoin(self.cfg['url'], 'admin')
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=numthreads, thread_name_prefix='DoccanoPool')
-        self.doccano_client = DoccanoClient(self.config['url'], login['username'], login['password']) ## TODO isso tem que sair, usar apenas o Django 
+        self.doccano_client = DoccanoClient(self.cfg['url'], login['username'], login['password']) ## TODO isso tem que sair, usar apenas o Django 
         self._django_client = django_admin_client.DjangoAdminBase(djangourl, login['username'], login['password'])
         self.django_client = django_admin_client.DjangoAdminDynamic(spec=self._django_client.generate_spec(), client=self._django_client)
         self.logging.info(f"Doccano service started: {login['username']} @ {djangourl} [{numthreads} threads]")
  
+
+
+    def import_from_index(self, task:dict):
+        # get project info
+        proj_id = task['projectid']
+        proj = self.mongo_projects.find_one({"id":proj_id})
+        proj_type = proj['project_type'][0]
+        self.logging.info(f"import_from_index -> proj_id: '{proj_id}', proj_type: '{proj_type}'")
+        indices = task['user']['indices']
+        self.logging.info(f"indices -> {indices}")
+        for hit in self.index.query({ 'query': task['query'] }, indices['indexdata']):
+            self.logging.info(f"index hit -> {hit}")
+
+
+
+
+    def generate_training_data(self, task:dict):
+        # get project info
+        proj_id = task['projectid']
+        proj = self.mongo_projects.find_one({"id":proj_id})
+        proj_type = proj['project_type'][0]
+        self.logging.info(f"generate_training_data -> proj_id: '{proj_id}', proj_type: '{proj_type}'")
+        if proj_type == "DocumentClassification":
+            self.generate_training_doc_class(proj)
+        # TODO other types
+    
+
+    def generate_training_doc_class(self, project:dict):
+        # get project labels
+        proj_id = project['id']
+        proj_labels = {}
+        for label in self.mongo_labels.find({"project":[proj_id]}):
+            proj_labels[label.get('id')] = label.get('text')
+        self.logging.info(f"proj_labels: {proj_labels}")
+
+        lookup = { 
+            "from": "document_annotations",
+            "localField": "id",
+            "foreignField": "document",
+            "as": "annotations"
+        }
+        self.logging.info(f"lookup: {lookup}")
+        for doc in self.mongo_documents.aggregate([
+                {"$lookup": lookup },
+                {"$match": {"project":[proj_id], "annotations": {"$exists": True, "$ne": []}  } },
+                #{'$sort': { sort: order } }
+            ]):
+            self.logging.info(f"doc: {doc}")
+            # TODO output somewhere in the correct format
+            
+
 
     def get_user(self, username:str):    
         return self.executor.submit(self._get_user, username).result()
@@ -53,17 +105,76 @@ class Service:
         self.logging.info(f"get_user '{username}': {user}")
         return user
 
-    def sync_project_documents(self, task:dict):
-        # list doccano documents
-        self.logging.info(task)
-        res = self.django_client.documents.all()
-        self.logging.info(f"django_client.documents: {res}")
+    def sync_annotations_with_mongodb(self):
+        return self.executor.submit(self._sync_annotations_with_mongodb).result()
 
-
-    def sync_projects_users(self, task:dict):
-        threads = [self.executor.submit(self._sync_projects_with_mongodb), self.executor.submit(self._sync_users_with_mongodb)]
+    def _sync_annotations_with_mongodb(self):
+        # list doccano annotations
+        threads = []
+        for anot_id in self.django_client.document_annotations.all().get('ids',[]):
+            threads.append(self.executor.submit(self._sync_annotation_to_mongo, anot_id))
         for _t in threads:
             _t.result()
+
+    def _sync_annotation_to_mongo(self, anot_id:str):
+        annotation = self.django_client.document_annotations.get(anot_id).get('details',{})
+        if self.mongo_document_annotations.count_documents({"id":anot_id}) <= 0:
+            annotation.update({
+                "id": anot_id
+            })
+            self.mongo_document_annotations.insert_one(annotation)
+            self.logging.info(f"Anotation added '{anot_id}'")
+        else:
+            self.mongo_document_annotations.update_one({"id":anot_id}, {"$set":annotation})
+            self.logging.debug(f"Anotation updated '{anot_id}'")
+        return annotation
+
+    def sync_documents_with_mongodb(self):
+        return self.executor.submit(self._sync_documents_with_mongodb).result()
+
+    def _sync_documents_with_mongodb(self):
+        # list doccano documents
+        threads = []
+        for doc_id in self.django_client.documents.all().get('ids',[]):
+            threads.append(self.executor.submit(self._sync_doc_to_mongo, doc_id))
+        for _t in threads:
+            _t.result()
+
+    def _sync_doc_to_mongo(self, doc_id:str):
+        doc = self.django_client.documents.get(doc_id).get('details',{})
+        if self.mongo_documents.count_documents({"id":doc_id}) <= 0:
+            doc.update({
+                "id": doc_id,
+                "meta": json.loads(doc.get("meta","{}"))
+            })
+            self.mongo_documents.insert_one(doc)
+            self.logging.info(f"Doc added '{doc_id}'")
+        else:
+            self.mongo_documents.update_one({"id":doc_id}, {"$set":doc})
+            self.logging.debug(f"Doc updated '{doc_id}'")
+        return doc
+
+    def sync_projects_users_labels(self):
+        threads = [
+            self.executor.submit(self._sync_projects_with_mongodb), 
+            self.executor.submit(self._sync_labels_with_mongodb),
+            self.executor.submit(self._sync_users_with_mongodb),
+            ]
+        for _t in threads:
+            _t.result()
+
+    def _sync_labels_with_mongodb(self):
+        # list doccano labels
+        for lbl_id in self.django_client.labels.all().get('ids',[]):
+            query = {"id": lbl_id}
+            label = self.django_client.labels.get(lbl_id).get('details',{})
+            label.update(query)
+            if self.mongo_labels.count_documents(query) <= 0:
+                self.mongo_labels.insert_one(label)
+                self.logging.info(f"Label added '{label.get('id',lbl_id)}'")
+            else:
+                self.mongo_labels.update_one(query, {"$set": label})
+                self.logging.debug(f"Label updated '{label.get('id',lbl_id)}'")
 
     def _sync_users_with_mongodb(self):
         # list doccano users
@@ -87,7 +198,7 @@ class Service:
                 self.logging.info(f"User added '{user.get('username',user_id)}'")
             else:
                 self.mongo_users.update_one(query, {"$set": user})
-                self.logging.info(f"User updated '{user.get('username',user_id)}'")
+                self.logging.debug(f"User updated '{user.get('username',user_id)}'")
 
     def _sync_projects_with_mongodb(self):
         # list doccano projects
@@ -101,21 +212,21 @@ class Service:
             if self.mongo_projects.count_documents(query) <= 0:
                 ## add task in mongodb
                 task = util.merge_default_task_config(self, {'type':'doccano', 'name':project['name'], 'projectid': prj_id})
-                util.set_user_task(self, admin_username, task)  
+                util.set_user_task(self, util.ADMIN_USERNAME, task)  
                 ## add project in mongodb
                 self.mongo_projects.insert_one(project)
                 self.logging.info(f"Project added '{project.get('name',prj_id)}'")
             else:
                 ## update task in mongodb
                 task = util.merge_default_task_config(self, {'type':'doccano', 'name':project['name'], 'projectid': prj_id})
-                util.set_user_task(self, admin_username, task)  
+                util.set_user_task(self, util.ADMIN_USERNAME, task)  
                 ## update project in mongodb
                 self.mongo_projects.update_one(query, {"$set": project})
-                self.logging.info(f"Project updated '{project.get('name',prj_id)}'")
+                self.logging.debug(f"Project updated '{project.get('name',prj_id)}'")
         # handle removed projects ans tasks
         remove_project_ids = [_p['id'] for _p in self.mongo_projects.find({"remove":True})]
         if len(remove_project_ids) > 0:
-            query = { "username": admin_username, "id": {"$in":remove_project_ids} }
+            query = { "username": util.ADMIN_USERNAME, "projectid": {"$in":remove_project_ids} }
             self.mongo_tasks.delete_many(query)
             self.mongo_projects.delete_many({"remove":True})
 

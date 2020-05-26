@@ -4,13 +4,15 @@ import sys
 import time
 import json
 import logging
+import pymongo
+import concurrent.futures
 import services.utils as util
 import services.elastic as elastic
 import services.doccano as doccano
 import services.scheduler as scheduler
 from requests.structures import CaseInsensitiveDict
 from flask import Flask, request, jsonify
-from pymongo import MongoClient
+
 
 
 # TODO - add twitter source   
@@ -23,34 +25,65 @@ from pymongo import MongoClient
 class Service:
     
     def __init__(self, logging, config): 
-        logging.info("Starting services ...")
+        numthreads = config['service'].get('threads',4) 
         self.logging = logging 
         self.config = config
         # database setup
-        self.mongodb = MongoClient(config['service']['mongodb'])[config['service']['database']]
+        self.mongodb = pymongo.MongoClient(config['service']['mongodb'])[config['service']['database']]
         self.mongo_tasks = self.mongodb['tasks']
         self.mongo_users = self.mongodb['users']
+        self.mongo_labels = self.mongodb['labels']
         self.mongo_projects = self.mongodb['projects']
+        self.mongo_documents = self.mongodb['documents']
+        self.mongo_document_annotations = self.mongodb['document_annotations']
+        self.mongo_tasks.create_index([("enabled", 1), ("username", 1), ("projectid", 1), ("nextruntime", -1)])
+        self.mongo_users.create_index([("username", 1), ("id", 1)])
+        self.mongo_labels.create_index([("id", 1)])
+        self.mongo_projects.create_index([("id", 1)])
+        self.mongo_documents.create_index([("id", 1)])
+        self.mongo_document_annotations.create_index([("id", 1)])
         # core services setup
         self.index = elastic.Service(self.logging, self.config)
         self.doccano = doccano.Service(self.logging, self.config, self.mongodb, self.index)
         self.scheduler = scheduler.Service(self.logging, self.config, self.mongodb, self.doccano, self.index)
+        logging.info(f"Core service started")
 
     def start(self):
         # tasks scheduler setup
         self.setup_admin_usertasks()
         self.scheduler.start()
 
-    def setup_admin_usertasks(self, username='admin'):
-        query = {"username":username}
+    def setup_admin_usertasks(self):
         tasks = self.config.get('admin_tasks',[])
         for task in tasks:
-            task.update(query)
-            util.set_user_task(self, username, task)   
+            util.set_user_task(self, util.ADMIN_USERNAME, task) 
+
+    def get_user_indices(self, username:str):
+        indices = self.mongo_users.find_one({'username': username}).get('indices',{})
+        ret = self.index.indices_status(indices)
+        return util.JSONEncoder().encode(ret)
 
     def get_user_tasks(self, username:str):
-        return util.JSONEncoder().encode({ "tasks": list(self.mongo_tasks.find({"username":username})) })
-    
+        return util.JSONEncoder().encode(list(self.mongo_tasks.find({"username":username})))
+      
     def set_user_task(self, username:str, task:dict):
         return util.JSONEncoder().encode(util.set_user_task(self, username, task))
 
+    def get_user_projects(self, username:str, sort='nextruntime', order=-1):
+        user_id = self.mongo_users.find_one({'username': username}).get('id',None)
+        if user_id != None:
+            return util.JSONEncoder().encode([_p for _p in self.mongo_projects.aggregate([
+                {
+                    "$lookup":
+                    {
+                        "from": "tasks",
+                        "localField": "id",
+                        "foreignField": "projectid",
+                        "as": "project_tasks"
+                    }
+                },
+                {'$match':{'users':[user_id]}},
+                {'$sort': { sort: order } }
+            ]) ])
+        return util.JSONEncoder().encode([])
+        

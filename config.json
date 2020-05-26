@@ -2,16 +2,14 @@
     "service":{
         "logfile": "service.log",
         "loglevel": "INFO",
-        "maxtasks": 4,
+        "maxtasks": 2,
         "mongodb": "mongodb://localhost:27017/",
         "database": "index-flow",
-        "storage": "./data",
-        "host": "0.0.0.0",
-        "port": 8081
+        "storage": "./data"
     },
     
     "elastic": {
-        "threads": 4,
+        "threads": 8,
         "api":{
             "host": "localhost",
             "port": 9200
@@ -27,7 +25,7 @@
     },
 
     "doccano":{
-        "threads": 4,
+        "threads": 8,
         "tempfolder": "data",
         "url": "http://localhost:8000",
         "login":{
@@ -38,11 +36,25 @@
 
     "admin_tasks":[
         {
-            "name": "Sync users&projects between Doccano & MongoDB",
-            "type": "sync_projects_users",
+            "name": "Sync users,projects,labels from Doccano",
+            "type": "sync_projects_users_labels",
             "enabled": true,
             "startrun": true,
             "interval": 120
+        },
+        {
+            "name": "Sync documents from Doccano",
+            "type": "sync_documents",
+            "enabled": true,
+            "startrun": true,
+            "interval": 600
+        },
+        {
+            "name": "Sync annotations from Doccano",
+            "type": "sync_annotations",
+            "enabled": true,
+            "startrun": true,
+            "interval": 400
         }
     ],
 
@@ -53,6 +65,7 @@
             "type": "doccano",
             "projectid": "0",
             "enabled": true,
+            "startrun": true,
             "interval": 600,
             "maxremaining": 100,
             "query": {
