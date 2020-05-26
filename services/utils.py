@@ -1,6 +1,8 @@
 import os
 import time
 import json
+#import psutil
+#import threading
 import html
 import html2text
 from bson import ObjectId
@@ -57,21 +59,30 @@ def merge_default_task_config(self, task:dict):
     return _task
 
 def set_user_task(self, username:str, task:dict):
-    query = {"username": username, "name":task.get('name','')}
+    query = {"username": username, "name":getTaskName(task)}
     task.update(query)
+    task = merge_default_task_config(self, task)
+    if task.get('_id', None) != None:
+        query = {'_id': ObjectId(task['_id'])}
     task.update({
-        "lastruntime": 0,
         "nextruntime": 0 if task.get('startrun',False) else int(time.time())+task.get('interval',60),
-        "running": False,
-        "error": None
+        "lastruntime": task.get('lastruntime', 0),
+        "avgruntime": task.get('avgruntime', 0.0),
+        "avgcpuusage": task.get('avgcpuusage', 0.0),
+        "running": task.get('running', False),
+        "error": task.get('error', None)
     })
     if self.mongo_tasks.count_documents(query) <= 0:
-        self.mongo_tasks.insert_one(task)
+        task['_id'] = self.mongo_tasks.insert_one(task).inserted_id
         self.logging.info(f"Task added: '{getTaskName(task)}' @ '{username}'")
+        return task
     else:
-        self.mongo_tasks.update_one(query, {"$set": task})
+        _task = task.copy()
+        _task.pop('_id', None)
+        self.mongo_tasks.update_one(query, {"$set": _task})
         self.logging.info(f"Task updated '{getTaskName(task)}' @ '{username}'")
-    return task
+        return task
+    
 
 def getDocFilters(doc):
     #references = doc.get(f'{FIELDPREFIX_FILTER}_REFS', [])
@@ -104,3 +115,19 @@ def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False)
 
 def dump_json(dic:dict):
     return dumps(dic)
+
+'''
+def get_curr_thread_cpu_percent(interval=0.1):
+    return get_threads_cpu_percent(threading.currentThread(), interval)
+
+def get_threads_cpu_percent(p, interval=0.1):
+   total_percent = p.cpu_percent(interval)
+   total_time = sum(p.cpu_times())
+   return [total_percent * ((t.system_time + t.user_time)/total_time) for t in p.threads()]
+'''
+
+class JSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, ObjectId):
+            return str(o)
+        return json.JSONEncoder.default(self, o)

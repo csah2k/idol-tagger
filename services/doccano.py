@@ -112,9 +112,12 @@ class Service:
                 ## update project in mongodb
                 self.mongo_projects.update_one(query, {"$set": project})
                 self.logging.info(f"Project updated '{project.get('name',prj_id)}'")
-        # handle removed projects
-        # TODO remove related TASKS TOO!
-        self.mongo_projects.delete_many({"remove":True})
+        # handle removed projects ans tasks
+        remove_project_ids = [_p['id'] for _p in self.mongo_projects.find({"remove":True})]
+        if len(remove_project_ids) > 0:
+            query = { "username": admin_username, "id": {"$in":remove_project_ids} }
+            self.mongo_tasks.delete_many(query)
+            self.mongo_projects.delete_many({"remove":True})
 
     def get_user_projects(self, user_id:str):
         return self.executor.submit(self._get_user_projects, user_id).result()

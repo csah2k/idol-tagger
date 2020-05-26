@@ -3,7 +3,7 @@ import json
 import logging
 import services.core as core
 from pymongo import MongoClient
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from requests.structures import CaseInsensitiveDict
 
 
@@ -32,14 +32,15 @@ def start_core_service():
     coreService = core.Service(logging, config)
     coreService.start()
 
-@app.route("/tasks/<username>", methods = ['GET'])
+@app.route("/tasks/<username>", methods = ['GET','POST'])
 def tasks(username:str):
-    return coreService.get_user_tasks(username)
+    ret = {}
+    if request.method == 'POST':
+        ret = coreService.set_user_task(username, request.json)
+    elif request.method == 'GET':
+        ret = coreService.get_user_tasks(username)
+    return Response(response=ret, status=200, mimetype="application/json")
 
-@app.route("/add_indextask")
-def add_indextask():
-    task = coreService.set_user_task("csah2k", config['TEST_indextasks']['rss'])
-    return task
 
 def getLogLvl(cfg):
     lvl = cfg.get('service',{}).get('loglevel', 'INFO').strip().upper()
@@ -61,6 +62,6 @@ if __name__ == "__main__":
 
     host = config.get('service',{}).get('host','0.0.0.0')
     port = config.get('service',{}).get('port',8080)
-    app.run(debug=False, use_reloader=False, host=host, port=port, threaded=True)
+    app.run(debug=False, use_reloader=False, host=host, port=port, threaded=False)
 
     

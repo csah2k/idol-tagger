@@ -47,6 +47,7 @@ class Service:
             query = {"enabled": True, "running": False, "nextruntime": {"$lt": curr_time }}
             for task in self.mongo_tasks.find(query):                
                 # add to executor pool 
+                ## TODO SAVE THREAD ID IN MONGO, TO KILL/RESTART IT IF NEEDED
                 self.executor.submit(self.runTask, task)
             self.mongo_tasks.update_many(query, {"$set":{"running":True, "lastruntime":curr_time}})
                 
@@ -55,8 +56,8 @@ class Service:
         raise Exception('sleeping')
             
     def runTask(self, task:dict):
-        # TODO get statistics here for any type of task
         error = None
+        start_time = time.time()
         try:
             # merge the user settings and the default config with current task
             username = util.getTaskUser(task)
@@ -90,10 +91,16 @@ class Service:
             self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")
             error = str(error)
         finally:
-            curr_time = int(time.time())
+            curr_time = time.time()
+            elapsed_time = curr_time - start_time
+            avgruntime = (task.get('avgruntime',elapsed_time)+elapsed_time)/2
+            #cpu_usage = util.get_curr_thread_cpu_percent()  ## TODO
+            #self.logging.warn(cpu_usage)
             update = {
                 "running": False,
-                "nextruntime": curr_time+task.get('interval',60)
+                "avgruntime": avgruntime,
+                #"avgcpuusage": int((task('avgcpuusage',cpu_usage)+cpu_usage)/2),
+                "nextruntime": int(curr_time+task.get('interval',60))
             }
             if error != None: update['error'] = error
             self.mongo_tasks.update_one({'_id': task['_id']}, {"$set": update})

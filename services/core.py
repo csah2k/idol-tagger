@@ -41,12 +41,6 @@ class Service:
         self.setup_admin_usertasks()
         self.scheduler.start()
 
-        #while True:
-        #    statistics = self.scheduler.statistics()
-        #    self.logging.info(f"scheduler statistics: {statistics}")
-        #    # TODO save the statistics somewhere
-        #    time.sleep(60)
-
     def setup_admin_usertasks(self, username='admin'):
         query = {"username":username}
         tasks = self.config.get('admin_tasks',[])
@@ -55,8 +49,8 @@ class Service:
             util.set_user_task(self, username, task)   
 
     def get_user_tasks(self, username:str):
-        return util.dumps({ "tasks": list(self.mongo_tasks.find({"username":username})) })
+        return util.JSONEncoder().encode({ "tasks": list(self.mongo_tasks.find({"username":username})) })
     
     def set_user_task(self, username:str, task:dict):
-        return util.set_user_task(self, username, task)
+        return util.JSONEncoder().encode(util.set_user_task(self, username, task))
 

@@ -1,6 +1,5 @@
 
 import re 
-import time
 import uuid 
 import random
 import logging
@@ -22,8 +21,7 @@ class Service:
         self.re_http_url = re.compile(r'^.*(https?://.+)$', re.IGNORECASE)   
         self.numthreads = self.config.get('threads',2)
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.numthreads, thread_name_prefix='RssPool')
-        self.statistics = { 'threads': self.numthreads, 'feeds': 0, 'scanned': 0, 'indexed': 0, 'elapsed_seconds': 0 }
-        self.logging.info(config)
+        self.statistics = { 'threads': self.numthreads, 'feeds': 0, 'scanned': 0, 'indexed': 0 }
 
     def getStatitics(self):
         return self.statistics.copy()
@@ -33,7 +31,6 @@ class Service:
         self.executor.shutdown()
         
     def _index_feeds(self, max_feeds=0):
-        start_time = time.time()
         filename = self.config.get('feeds', 'data/feeds') # TODO salvar/ler lista de feeds no mongodb
         feeds_file = open(filename, 'r') 
         Lines = feeds_file.readlines() 
@@ -63,8 +60,7 @@ class Service:
             self.logging.debug(f"{result}")
             total_process_docs += result.get('total', 0)
             total_indexed_docs += result.get('indexed', 0)
-            elapsed_time = int(time.time() - start_time)
-            self.statistics.update({'scanned': total_process_docs, 'indexed': total_indexed_docs, 'elapsed_seconds': elapsed_time })
+            self.statistics.update({'scanned': total_process_docs, 'indexed': total_indexed_docs })
         
         self.logging.info(f"RSS indextask '{self.config.get('name')}' finished: {self.statistics}")
         return self.statistics
@@ -89,6 +85,7 @@ class Service:
                 content = util.cleanText(_e.get('summary', _e.get('description', _e.get('text',''))))
                 title = util.cleanText(_e.get('title', _e.get('titulo', _e.get('headline', content)))) # TODO truncate big titles
 
+                filterHits = []
                 if self.config.get('filters', False): # TODO ser possivel escolher quais filtros aplicar
                     filterHits = self.index.search_filters(content, indices['filters'])
 
@@ -101,6 +98,7 @@ class Service:
                         'url': link,
                         'src': feed_url,
                         'indextask': self.config.get('name'),
+                        'task_id': str(self.config.get('_id', self.config.get('id'))),
                         'filter': {}
                     }
                     for hit in filterHits:

@@ -149,12 +149,13 @@ class Service:
                     "url":      { "type": "keyword", "index": False },
                     "src":      { "type": "keyword", "index": False },
                     "indextask":{ "type": "keyword"},
+                    "task_id":  { "type": "keyword"},
                     "filter":   { "type": "object"},
                     "labels":   { "type": "object"}
                 }
             try:
                 res = self.elastic.indices.create(index, body=body)
-                self.logging.debug(f"create_index response: {res}")
+                self.logging.info(f"create index {res}")
                 return res
             except Exception as error:
                 self.logging.error(f"ElasticService: {error}")
