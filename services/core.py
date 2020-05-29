@@ -28,33 +28,38 @@ class Service:
         numthreads = config['service'].get('threads',4) 
         self.logging = logging 
         self.config = config
+        self.tasks_defaults = config.get('tasks_defaults',{})
         # database setup
         self.mongodb = pymongo.MongoClient(config['service']['mongodb'])[config['service']['database']]
+        # db tables
         self.mongo_tasks = self.mongodb['tasks']
         self.mongo_users = self.mongodb['users']
+        self.mongo_roles = self.mongodb['roles']
         self.mongo_labels = self.mongodb['labels']
         self.mongo_projects = self.mongodb['projects']
         self.mongo_documents = self.mongodb['documents']
-        self.mongo_document_annotations = self.mongodb['document_annotations']
+        self.mongo_role_mappings = self.mongodb['role_mappings']
+        # db indices
         self.mongo_tasks.create_index([("enabled", 1), ("username", 1), ("projectid", 1), ("nextruntime", -1)])
+        self.mongo_documents.create_index([("projectid", 1), ("id", 1)])
         self.mongo_users.create_index([("username", 1), ("id", 1)])
+        self.mongo_role_mappings.create_index([("id", 1)])
+        self.mongo_roles.create_index([("name", 1)])
         self.mongo_labels.create_index([("id", 1)])
         self.mongo_projects.create_index([("id", 1)])
-        self.mongo_documents.create_index([("id", 1)])
-        self.mongo_document_annotations.create_index([("id", 1)])
         # core services setup
         self.index = elastic.Service(self.logging, self.config)
         self.doccano = doccano.Service(self.logging, self.config, self.mongodb, self.index)
         self.scheduler = scheduler.Service(self.logging, self.config, self.mongodb, self.doccano, self.index)
-        logging.info(f"Core service started")
+        logging.info(f"All services running!")
 
     def start(self):
         # tasks scheduler setup
-        self.setup_admin_usertasks()
+        self.setup_system_tasks()
         self.scheduler.start()
 
-    def setup_admin_usertasks(self):
-        tasks = self.config.get('admin_tasks',[])
+    def setup_system_tasks(self):
+        tasks = self.config.get('system_tasks',[])
         for task in tasks:
             util.set_user_task(self, util.ADMIN_USERNAME, task) 
 

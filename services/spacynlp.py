@@ -25,6 +25,43 @@ class Service:
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 4), thread_name_prefix='SpacyPool')
         self.doccano = doccano.Service(logging, config, idol)
         self.idol = idol 
+
+
+    
+    def generate_training_data(self, task:dict):
+        # get project info
+        proj_id = task['projectid']
+        proj = self.mongo_projects.find_one({"id":proj_id})
+        proj_type = proj['project_type'][0]
+        if proj_type == "DocumentClassification":
+            self.generate_training_doc_class(task, proj)
+        # TODO other types
+    
+
+    def generate_training_doc_class(self, task:dict, project:dict):
+        # get project labels
+        proj_id = project['id']
+        proj_labels = {}
+        for label in self.mongo_labels.find({"project":[proj_id]}):
+            proj_labels[label.get('id')] = label.get('text')
+        #self.logging.info(f"proj_labels: {proj_labels}")
+
+        lookup = { 
+            "from": "document_annotations",
+            "localField": "id",
+            "foreignField": "document",
+            "as": "annotations"
+        }
+        #self.logging.info(f"lookup: {lookup}")
+        for doc in self.mongo_documents.aggregate([
+                {"$lookup": lookup },
+                {"$match": {"project":[proj_id], "annotations": {"$exists": True, "$ne": []}  } },
+                #{'$sort': { sort: order } }
+            ]):
+            self.logging.info(f"doc to export: {doc}")
+            # TODO output somewhere in the correct format
+            
+
         
     def openProjectDB(self, project):        
         dbfile, _, _ = util.getDataFilename(self.config, project, 'sqlite', 'db')

@@ -7,3 +7,4 @@ index/mongo/mongodb*
 __pycache__/
 *.py[cod]
 *.so
+*.out

@@ -35,25 +35,26 @@ class Service:
         self.cfg = config.get('elastic').copy()
         self.lock = threading.Lock()
         self.index_queues = {}
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.cfg.get('threads', 2), thread_name_prefix='ElasticPool')
+        self.numthreads = config.get('threads', 2)
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.numthreads, thread_name_prefix='ElasticPool')
         self.executor.submit(self.initService).result()
     
     def initService(self):
         try:
             self.elastic = Elasticsearch([self.cfg.get('api')])
             self.inf = self.elastic.info() 
-            self.logging.info(f"Connected to Elastic Server [cluster_name: '{self.inf['cluster_name']}', version: {self.inf['version']['number']}]")
+            self.logging.info(f"ElasticSearch service started [cluster_name: '{self.inf['cluster_name']}', version: {self.inf['version']['number']}, threads: {self.numthreads}]")
             self._create_pipelines()
             return True
         except Exception as error:
-            self.logging.error(f"ElasticService: {error}")
+            self.logging.error(f"ElasticSearch: {error}")
             return False
     
     def indices_status(self, indices:dict):
         return self.executor.submit(self._indices_status, indices).result()
 
     def _indices_status(self, indices:dict):  
-        return self.elastic.indices.stats(','.join([v for k,v in indices.items()]))
+        return self.elastic.indices.stats(index=','.join([v for k,v in indices.items()]), metric='docs,store')
         
     def initIndices(self, indices:dict):   
         return self.executor.submit(self._initIndices, indices).result()
@@ -76,7 +77,8 @@ class Service:
 
     def _index_document(self, document:dict, index:str):
         try:
-            self.elastic.index(index=index, body=document, pipeline='index-pipeline')
+            _id = document.get('_id', document.get('id', document.get('ref', None)))
+            self.elastic.index(index=index, body=document, id=_id, pipeline='index-pipeline')
             return 1
         except Exception as error:
             self.logging.error(f"ElasticService: {error}")
@@ -124,14 +126,13 @@ class Service:
             res = self.elastic.index(index, body)
             return res
         except Exception as error:
-            self.logging.error(f"ElasticService: {error}")
+            self.logging.error(f"ElasticSearch: {error}")
 
     def create_index(self, index:str, filtr=False):
         return self.executor.submit(self._create_index, index, filtr).result()
 
     def _create_index(self, index:str, filtr=False):
         if not self.elastic.indices.exists(index):
-            self.logging.debug(f"creating index: {index}")
             body = {
                 "settings" : {
                     "number_of_shards" : 1,
@@ -147,7 +148,7 @@ class Service:
                 }
             else:
                 body['mappings']['properties'] = {
-                    "reference":{ "type": "keyword"},
+                    "id" :   { "type": "keyword" },
                     "title" :   { "type": "text" },
                     "content":  { "type": "text" },  
                     "language": { "type": "keyword"},
@@ -164,7 +165,7 @@ class Service:
                 self.logging.info(f"create index {res}")
                 return res
             except Exception as error:
-                self.logging.error(f"ElasticService: {error}")
+                self.logging.error(f"ElasticSearch: {error}")
 
     def detect_language(self, text:str):
         return self.executor.submit(self._detect_language, text).result()
@@ -198,7 +199,7 @@ class Service:
             lang = res.get('docs',[{}])[0].get('doc',{}).get('_source',{}).get('language', 'unknown')
             return lang
         except Exception as error:
-            self.logging.error(f"ElasticService: {error}")
+            self.logging.error(f"ElasticSearch: {error}")
         
     
     def _create_pipelines(self):
@@ -271,4 +272,4 @@ class Service:
             res = self.elastic.ingest.put_pipeline('index-pipeline', body)
             self.logging.debug(res)
         except Exception as error:
-            self.logging.error(f"ElasticService: {error}")
+            self.logging.error(f"ElasticSearch: {error}")

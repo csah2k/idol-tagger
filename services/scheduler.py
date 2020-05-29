@@ -1,6 +1,7 @@
 
 import time
 import sched
+import ctypes
 import concurrent.futures
 import services.rss as rss
 import services.stock as stock
@@ -11,12 +12,14 @@ from bson.objectid import ObjectId
 from services.elastic import Service as elasticService
 from services.doccano import Service as doccanoService
 
-pooling_interval=3000
+pooling_interval_ms=3000
+task_timeout_sec=3600
 
 class Service:
     
     def __init__(self, logging, config, mongodb, doccano:doccanoService, index:elasticService): 
         maxtasks = config['service']['maxtasks']
+        self.executing_tasks = {}
         self.logging = logging 
         self.config = config
         self.doccano = doccano
@@ -24,6 +27,7 @@ class Service:
         self.mongo_tasks = mongodb['tasks']
         self.mongo_users = mongodb['users']
         self.mongo_projects = mongodb['projects']
+        self.tasks_defaults = config.get('tasks_defaults',{})
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=maxtasks+1, thread_name_prefix='Scheduler')
         self.logging.info(f"Scheduler service started  [{maxtasks} tasks]")
 
@@ -40,16 +44,38 @@ class Service:
         query = {"enabled":True, "running":True}
         self.mongo_tasks.update_many(query, {"$set":{"running":False}})
 
-    @retry(wait_fixed=pooling_interval)
+    @retry(wait_fixed=pooling_interval_ms)
     def handle_tasks(self):
         try:
             curr_time = int(time.time())
-            query = {"enabled": True, "running": False, "nextruntime": {"$lt": curr_time }}
-            for task in self.mongo_tasks.find(query):                
+
+            # check for timeouted and done tasks to remove
+            remove_tasks = []
+            for task_id, task in self.executing_tasks.items():
+                if task[1].done(): 
+                    remove_tasks.append((task_id, task[1]))
+                    self.mongo_tasks.update_one({'_id': ObjectId(task_id)}, {"$set":{"running":False}})
+                if curr_time - task[0] > task_timeout_sec:
+                    remove_tasks.append((task_id, task[1]))
+                    self.logging.warn(f"Killing task by timeout, id: '{task_id}'") 
+                    self.mongo_tasks.update_one({'_id': ObjectId(task_id)}, {"$set":{"running":False, "error":f"killed due to timeout after waiting {task_timeout_sec} secs"}})
+            for task_id, thread in remove_tasks: 
+                thread.cancel()
+                self.executing_tasks.pop(task_id)
+
+            for task in self.mongo_tasks.find({"enabled": True, "running": False, "nextruntime": {"$lt": curr_time }}):
+                task_id = str(task['_id'])
+                # check if tasks is already running
+                is_running = False
+                for _task_id, task in self.executing_tasks.items():       
+                    if _task_id == task_id: is_running = True
                 # add to executor pool 
-                ## TODO SAVE THREAD ID IN MONGO, TO KILL/RESTART IT IF NEEDED
-                self.executor.submit(self.runTask, task)
-            self.mongo_tasks.update_many(query, {"$set":{"running":True, "lastruntime":curr_time}})
+                if is_running:                    
+                    self.logging.warn(f"Task still running, id: '{task_id}'") 
+                    self.mongo_tasks.update_one({'_id': ObjectId(task_id)}, {"$set":{"running":True, "error":"another instance is running"}})
+                else: 
+                    self.executing_tasks[task_id] = (curr_time, self.executor.submit(self.runTask, task))
+                    self.mongo_tasks.update_one({'_id': ObjectId(task_id)}, {"$set":{"running":True, "lastruntime":curr_time}})
                 
         except Exception as error:
             self.logging.error(f"Scheduler: {str(error)}") 
@@ -57,42 +83,39 @@ class Service:
             
     def runTask(self, task:dict):
         error = None
+        task_result = {}
         start_time = time.time()
         try:
             # merge the user settings and the default config with current task
             username = util.getTaskUser(task)
-            self.logging.info(f"Running task '{util.getTaskName(task)}' @ '{username}'")
+            self.logging.info(f"Running task '{task.get('type','NO-TYPE')}' : '{util.getTaskName(task)}' @ '{username}'")
             user = self.mongo_users.find_one({'username': username})
             task = util.merge_default_task_config(self, task)
             task.update({"user":user})
 
             # INDEX TASKS
-            if task['type'] == 'rss':
-                rssService = rss.Service(self.logging, task, self.index)
-                _result = rssService.index_feeds()
+            if task['type'] == 'rss':  # enduser
+                _rss = rss.Service(self.logging, task, self.index)
+                _rss.index_feeds()
+                task_result = _rss.result()
             
-            elif task['type'] == 'stock':
+            elif task['type'] == 'stock':  # enduser
                 stockService = stock.Service(self.logging, task, self.index)
                 exchangeCodes = task.get('exchanges', [])
                 if len(exchangeCodes) == 0:
                     exchangeCodes = stockService.list_exchange_codes()
                 stockService.index_stocks_symbols(exchangeCodes)
             
-            # DOCCANO
-            elif task['type'] == 'doccano':
+            elif task['type'] == 'import_from_index': # enduser
                 self.doccano.import_from_index(task)
-                #self.doccano.generate_training_data(task) 
+            
+            elif task['type'] == 'export_from_doccano': # SYSTEM
+                self.doccano.export_from_doccano(task) 
                 #spacyService = spacynlp.Service(self.logging, self.config, self.index)
                 #spacyService.train_project_model(task)
-
-            elif task['type'] == 'sync_documents':
-                self.doccano.sync_documents_with_mongodb() 
-            
-            elif task['type'] == 'sync_annotations':
-                self.doccano.sync_annotations_with_mongodb()
-
-            elif task['type'] == 'sync_projects_users_labels':
-                self.doccano.sync_projects_users_labels()
+                
+            elif task['type'] == 'sync_doccano_metadada':  # SYSTEM
+                self.doccano.sync_doccano_metadada()
 
         except Exception as error:
             self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")
@@ -111,3 +134,4 @@ class Service:
             }
             if error != None: update['error'] = error
             self.mongo_tasks.update_one({'_id': task['_id']}, {"$set": update})
+

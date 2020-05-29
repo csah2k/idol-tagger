@@ -62,6 +62,10 @@ def indices(username:str):
 
 
 
+
+
+
+
 if __name__ == "__main__":
     # DEV FLASK SELF-STARTUP
     with open('config.json') as json_configfile:

@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import json
 import string
@@ -45,6 +46,11 @@ def cleanText(text):
     text = text.strip().capitalize()
     return text
 
+def cleanDjangoError(response):
+    errors = [cleanText(str(e)) for e in (response or {}).get('errors',['error'])]
+    if len(errors) > 0:
+        return re.sub(r'[\s\W]+', ' ', '; '.join(errors))[:100].rsplit(' ', 1)[0]+'...'
+
 def getDocLink(doc):
     return doc.get('URL', doc.get('LINK', doc.get('FEED', [''] )))[0]   
 
@@ -52,46 +58,79 @@ def getDocDate(doc):
     return doc.get('DATE', doc.get('DREDATE', doc.get('TIMESTAMP', [''] )))[0]   
 
 def getTaskName(task:dict):
-    return task.get('name', f"{task.get('type','')}-{task.get('_id','')}")
+    return task.get('name', f"{task.get('type','<type?>')}-{task.get('_id',task.get('id',''))}")
 
 def getTaskUser(task:dict):
-    return task.get('user',{}).get('username',task.get('username','-'))
+    return task.get('user',{}).get('username',task.get('username','anonymous'))
 
 def merge_default_task_config(self, task:dict):
-    _task = self.config.get('user_tasks',{}).get(task.get('type','default'),{}).copy()
+    _task = self.tasks_defaults.get(task.get('type','default'),{}).copy()
+    _params = _task.get('params',{}).copy()
+    _params.update(task.get('params',{}))
     _task.update(task)
+    _task['params'] = _params
     return _task
+
+def getErrMsg(error):
+    return {
+        "error": str(error)
+    }
 
 def set_user_task(self, username:str, task:dict):
     query = None
     if task.get('_id', None) != None:
-        query = {'_id': ObjectId(task['_id'])}
+        query = {"username": username, '_id': ObjectId(task['_id'])}
     elif username == ADMIN_USERNAME: # id is not necessary for admin tasks
         query = {"username": username, "name":getTaskName(task)}
+    if query != None and task.get('type', None) != None:
+        query.update({ "type" : task.get('type') })
+
+    # ==== safety checks ====
+    # check valid task type
+    if task.get('type', None) not in self.tasks_defaults.keys():
+        er = f"Invalid task type: '{task.get('type', None)}'"
+        self.logging.error(f"{er} @ '{username}'")
+        return getErrMsg(er)
+
+    # ==== other tasks validations ====
+    if task.get('type',None) == "import_from_index":
+        # check if user has access to projectid if any
+        proj_id = task.get('params',{}).get('projectid',None)
+        if proj_id != None: 
+            user = self.mongo_users.find_one({"username": username})
+            proj = self.mongo_projects.find_one({"id":proj_id, "users":[user['id']] })
+            if proj == None :
+                er = f"User {user['id']} project {proj_id} not found @ '{username}'"
+                self.logging.error(er)
+                return getErrMsg(er)
+
+    ## TODO ??? white list of allowed key names in task object
     
     task.update({"username": username})
     task = merge_default_task_config(self, task)
     task.update({
-        "nextruntime": 0 if task.get('startrun',False) else int(time.time())+task.get('interval',60),
+        "nextruntime": int(time.time()) if task.get('startrun',False) else int(time.time())+task.get('interval',60),
         "lastruntime": task.get('lastruntime', 0),
         "avgruntime": task.get('avgruntime', 0.0),
-        "avgcpuusage": task.get('avgcpuusage', 0.0),
-        "running": task.get('running', False),
-        "error": task.get('error', None)
+        #"avgcpuusage": task.get('avgcpuusage', 0.0),
+        "running": False,
+        "error": None
     })
-
+    _id = task.pop('_id', None)
     if query == None or self.mongo_tasks.count_documents(query)<=0:      
         # new user task   
-        task['_id'] = self.mongo_tasks.insert_one(task).inserted_id
-        self.logging.info(f"Task added: '{getTaskName(task)}' @ '{username}'")
-        return task
+        _id = str(self.mongo_tasks.insert_one(task).inserted_id)
+        self.logging.info(f"Task added: '{_id}' @ '{username}'")
     else:
-        # existing user task, or any admin task
-        _task = task.copy()
-        _task.pop('_id', None)
-        self.mongo_tasks.update_one(query, {"$set": _task})
-        self.logging.info(f"Task updated '{getTaskName(task)}' @ '{username}'")
-        return task
+        # update task
+        task.pop('type', None)
+        task.pop('error', None)
+        task.pop('running', None)
+        self.mongo_tasks.update_one(query, {"$set": task})
+        self.logging.info(f"Task updated '{_id or getTaskName(task)}' @ '{username}'")
+
+    task['_id'] = _id
+    return task
 
     
 

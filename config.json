@@ -2,7 +2,7 @@
     "service":{
         "logfile": "service.log",
         "loglevel": "INFO",
-        "maxtasks": 2,
+        "maxtasks": 4,
         "mongodb": "mongodb://localhost:27017/",
         "database": "index-flow",
         "storage": "./data"
@@ -34,89 +34,86 @@
         }
     },
 
-    "admin_tasks":[
+    "system_tasks":[
         {
-            "name": "Sync users,projects,labels from Doccano",
-            "type": "sync_projects_users_labels",
-            "enabled": true,
-            "startrun": true,
+            "name": "Sync metadada from Doccano",
+            "type": "sync_doccano_metadada",
             "interval": 120
-        },
-        {
-            "name": "Sync documents from Doccano",
-            "type": "sync_documents",
-            "enabled": true,
-            "startrun": true,
-            "interval": 600
-        },
-        {
-            "name": "Sync annotations from Doccano",
-            "type": "sync_annotations",
-            "enabled": true,
-            "startrun": true,
-            "interval": 400
         }
     ],
 
 
-    "user_tasks":{ 
-        "doccano":{
-            "name": "Sync docs: Elastic -> Doccano -> MongoDB",
-            "type": "doccano",
+    "tasks_defaults":{ 
+        "sync_doccano_metadada": {
+            "name": "",
+            "type": "sync_doccano_metadada",
+            "enabled": true,
+            "startrun": true,
+            "interval": 3600,
+            "running": false,
+            "error": "",
+            "params": { }
+        },
+        "import_from_index":{
+            "name": "",
+            "type": "import_from_index",
+            "enabled": true,
+            "startrun": true,
+            "interval": 3600,
+            "running": false,
+            "error": "",
+            "params": { 
+                "projectid": "0",
+                "maxremaining": 50,
+                "query": {
+                    "match_all": {}
+                }
+            }
+        },
+        "export_from_doccano":{
+            "name": "",
+            "type": "export_from_doccano",
             "projectid": "0",
             "enabled": true,
             "startrun": true,
-            "interval": 600,
-            "maxremaining": 100,
-            "query": {
-                "match_all": {}
+            "interval": 3600,
+            "running": false,
+            "error": "",
+            "params": { 
+                "projectid": "0"
             }
         },
         "rss": {
-            "type": "rss",
             "name": "RSS Feeds",
-            "enabled": false,
-            "filters": false,
-            "interval": 300,
-            "threads": 5,
-            "feeds": "data/feeds.rss"
-        },
-        "stock": {
-            "name": "Empresas nas bolsas US e BR",
-            "type": "stock",
-            "enabled": false,
-            "interval": 604800,
-            "threads": 2,
-            "database": "BUSINESS",
-            "url": "https://finnhub.io/api/v1",
-            "api": "bqu00jvrh5rb3gqqf9q0",
-            "key": "bqu04u7rh5rb3gqqfb1g",
-            "exchanges": ["US", "BR"],
-            "filters": [ ]
-        }
-    },
-
-
-    "TEST_indextasks": {
-        "stock": {
-            "name": "Empresas nas bolsas US e BR",
-            "type": "stock",
-            "enabled": false,
-            "api": "bqu00jvrh5rb3gqqf9q0",
-            "key": "bqu04u7rh5rb3gqqfb1g",
-            "exchanges": ["US", "BR"],
-            "filters": [ ]
-        },
-        "rss": {
-            "name": "Feeds de noticias",
             "type": "rss",
             "enabled": true,
-            "filters": true,
-            "feeds": "data/feeds.rss"
+            "startrun": true,
+            "interval": 3600,
+            "running": false,
+            "error": "",
+            "params": {
+                "threads": 5,
+                "feeds": "data/feeds.rss"
+            }            
+        },
+        "stock": {
+            "name": "Empresas nas bolsas US e BR",
+            "type": "stock",
+            "enabled": true,
+            "startrun": true,
+            "interval": 3600,
+            "running": false,
+            "error": "",
+            "params": {
+                "threads": 5,
+                "url": "https://finnhub.io/api/v1",
+                "api": "bqu00jvrh5rb3gqqf9q0",
+                "key": "bqu04u7rh5rb3gqqfb1g",
+                "exchanges": ["US", "BR"],
+                "filters": [ ]
+            }
         }
-    }
-
-   
+    }   
         
     
 }
