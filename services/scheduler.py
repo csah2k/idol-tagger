@@ -19,6 +19,7 @@ class Service:
     
     def __init__(self, logging, config, mongodb, doccano:doccanoService, index:elasticService): 
         maxtasks = config['service']['maxtasks']
+        self.running = False
         self.executing_tasks = {}
         self.logging = logging 
         self.config = config
@@ -29,18 +30,19 @@ class Service:
         self.mongo_projects = mongodb['projects']
         self.tasks_defaults = config.get('tasks_defaults',{})
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=maxtasks+1, thread_name_prefix='Scheduler')
-        self.logging.info(f"Scheduler service started  [{maxtasks} tasks]")
+        self.logging.info(f"Scheduler service started  [mongodb: {mongodb.client}, {maxtasks} tasks]")
+        
+
 
     def start(self):
         self.executor.submit(self.reset_tasks).result()
         self.executor.submit(self.handle_tasks)
+        self.running = True
 
-    def statistics(self):
-        return 'TODO'
 
     def reset_tasks(self):
         # set all tasks as NOT running
-        curr_time = int(time.time())
+        #curr_time = int(time.time())
         query = {"enabled":True, "running":True}
         self.mongo_tasks.update_many(query, {"$set":{"running":False}})
 
@@ -83,7 +85,7 @@ class Service:
             
     def runTask(self, task:dict):
         error = None
-        task_result = {}
+        #task_result = {}
         start_time = time.time()
         try:
             # merge the user settings and the default config with current task
@@ -97,7 +99,7 @@ class Service:
             if task['type'] == 'rss':  # enduser
                 _rss = rss.Service(self.logging, task, self.index)
                 _rss.index_feeds()
-                task_result = _rss.result()
+                #task_result = _rss.result()
             
             elif task['type'] == 'stock':  # enduser
                 stockService = stock.Service(self.logging, task, self.index)

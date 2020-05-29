@@ -1,4 +1,4 @@
-
+# pylint: disable=unexpected-keyword-arg
 
 import time
 import urllib
@@ -37,7 +37,7 @@ class Service:
         self.index_queues = {}
         self.numthreads = config.get('threads', 2)
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.numthreads, thread_name_prefix='ElasticPool')
-        self.executor.submit(self.initService).result()
+        self.running = self.executor.submit(self.initService).result()
     
     def initService(self):
         try:

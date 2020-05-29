@@ -3,7 +3,7 @@
 # sudo docker-compose -f docker-compose.dev.yml up
 cd doccano
 #( sudo qterminal --execute "docker-compose -f docker-compose.dev.yml up" & ) > /dev/null 2>&1
-sudo docker-compose -f docker-compose.dev.yml up
+sudo docker-compose -f docker-compose.prod.yml up
 
 
 #echo "wait..."

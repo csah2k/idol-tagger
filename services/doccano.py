@@ -1,3 +1,4 @@
+# pylint: disable=no-member
 
 import os
 import re
@@ -12,6 +13,7 @@ import concurrent.futures
 import urllib.parse
 import django_admin_client
 from retrying import retry
+
 from doccano_api_client import DoccanoClient
 from requests.structures import CaseInsensitiveDict
 from services.elastic import Service as elasticService
@@ -25,6 +27,7 @@ import services.utils as util
 class Service:
 
     def __init__(self, logging, config, mongodb, index:elasticService): 
+        self.running = False
         self.logging = logging 
         self.config = config
         self.tasks_defaults = config.get('tasks_defaults',{})
@@ -41,10 +44,14 @@ class Service:
         numthreads = self.cfg.get('threads',2)
         djangourl = urllib.parse.urljoin(self.cfg['url'], 'admin')
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=numthreads, thread_name_prefix='DoccanoPool')
-        self.doccano_client = DoccanoClient(self.cfg['url'], self.login['username'], self.login['password'])
-        self._django_client = django_admin_client.DjangoAdminBase(djangourl, self.login['username'], self.login['password'])
-        self.django_client = django_admin_client.DjangoAdminDynamic(spec=self._django_client.generate_spec(), client=self._django_client)
-        self.logging.info(f"Doccano service started [api: '{self.login['username']}@{djangourl}', threads: {numthreads}]")
+        try:
+            self.doccano_client = DoccanoClient(self.cfg['url'], self.login['username'], self.login['password'])
+            self._django_client = django_admin_client.DjangoAdminBase(djangourl, self.login['username'], self.login['password'])
+            self.django_client = django_admin_client.DjangoAdminDynamic(spec=self._django_client.generate_spec(), client=self._django_client)
+            self.logging.info(f"Doccano service started [django: '{self.login['username']}@{djangourl}', threads: {numthreads}]")
+            self.running = True
+        except Exception as error:
+            self.logging.error(f"cant connect to doccano api at '{self.login['username']}@{djangourl}' error -> {str(error)}")
     
 
     def get_label_list(self, project_id:int):
@@ -58,15 +65,15 @@ class Service:
     def import_from_index(self, task:dict):
         # get project info
         proj_id = task['params']['projectid']
-        proj = self.mongo_projects.find_one({"id":proj_id})
-        proj_type = proj['project_type'][0]
+        #proj = self.mongo_projects.find_one({"id":proj_id})
+        #proj_type = proj['project_type'][0]
 
         user_id = task['user']['id']
         indices = task['user']['indices']
-        index_name = indices['indexdata']
+        #index_name = indices['indexdata']
         index_query = { 'query': task['params']['query'] }
         # check if doccano is full of pending docs to tag
-        statistics = self.doccano_client.get_project_statistics(proj_id).json()
+        statistics = self.doccano_client.get_project_statistics(proj_id)
         maxremaining = task['params'].get('maxremaining', 100)
         remaining = statistics.get('remaining', 0)
         self.logging.info(f"import_from_index -> statistics: {statistics}")
@@ -102,10 +109,10 @@ class Service:
     def export_from_doccano(self, task:dict):
         # get project info
         proj_id = task['params']['projectid']
-        proj = self.mongo_projects.find_one({"id":proj_id})
-        proj_type = proj['project_type'][0]
+        #proj = self.mongo_projects.find_one({"id":proj_id})
+        #proj_type = proj['project_type'][0]
 
-        date = datetime.datetime.now().isoformat()
+        #date = datetime.datetime.now().isoformat()
         resp = self.doccano_client.get_doc_download(int(proj_id), 'json')
         for line in resp.text.splitlines():
             doc = json.loads(line)            
@@ -196,7 +203,7 @@ class Service:
         
     def _sync_role_mappings_with_mongodb(self):
         # flag for removal
-        flag = self.mongo_role_mappings.update_many({}, {"$set":{"remove":True}})
+        _flag = self.mongo_role_mappings.update_many({}, {"$set":{"remove":True}})
         # list all doccano roles-mappings
         for role_id in self.django_client.role_mappings.all().get('ids',[]):
             query = {"id": role_id}
@@ -247,7 +254,7 @@ class Service:
         # list all doccano projects
         res = self.django_client.projects.all()
         # flag for removal
-        flag = self.mongo_projects.update_many({}, {"$set":{"remove":True}})
+        _flag = self.mongo_projects.update_many({}, {"$set":{"remove":True}})
         for prj_id in res['ids']:
             query = {"id": prj_id}
             project = self.django_client.projects.get(prj_id).get('details',{})

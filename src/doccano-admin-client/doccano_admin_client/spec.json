@@ -1,0 +1,537 @@
+{
+  "models": {
+    "document_annotations": {
+      "id": "document_annotations",
+      "app": "api",
+      "name": "documentannotation",
+      "fields": {
+        "prob": {
+          "name": "prob",
+          "required": true,
+          "default_value": ""
+        },
+        "manual": {
+          "name": "manual",
+          "required": false,
+          "default_value": ""
+        },
+        "user": {
+          "name": "user",
+          "required": true,
+          "default_value": ""
+        },
+        "document": {
+          "name": "document",
+          "required": true,
+          "default_value": ""
+        },
+        "label": {
+          "name": "label",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "documents": {
+      "id": "documents",
+      "app": "api",
+      "name": "document",
+      "fields": {
+        "text": {
+          "name": "text",
+          "required": true,
+          "default_value": ""
+        },
+        "project": {
+          "name": "project",
+          "required": true,
+          "default_value": ""
+        },
+        "meta": {
+          "name": "meta",
+          "required": true,
+          "default_value": ""
+        },
+        "annotations_approved_by": {
+          "name": "annotations_approved_by",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "labels": {
+      "id": "labels",
+      "app": "api",
+      "name": "label",
+      "fields": {
+        "text": {
+          "name": "text",
+          "required": true,
+          "default_value": ""
+        },
+        "prefix_key": {
+          "name": "prefix_key",
+          "required": false,
+          "default_value": ""
+        },
+        "suffix_key": {
+          "name": "suffix_key",
+          "required": false,
+          "default_value": ""
+        },
+        "project": {
+          "name": "project",
+          "required": true,
+          "default_value": ""
+        },
+        "background_color": {
+          "name": "background_color",
+          "required": true,
+          "default_value": ""
+        },
+        "text_color": {
+          "name": "text_color",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "projects": {
+      "id": "projects",
+      "app": "api",
+      "name": "project",
+      "fields": {
+        "name": {
+          "name": "name",
+          "required": true,
+          "default_value": ""
+        },
+        "description": {
+          "name": "description",
+          "required": true,
+          "default_value": ""
+        },
+        "guideline": {
+          "name": "guideline",
+          "required": true,
+          "default_value": ""
+        },
+        "users": {
+          "name": "users",
+          "required": true,
+          "default_value": ""
+        },
+        "project_type": {
+          "name": "project_type",
+          "required": true,
+          "default_value": ""
+        },
+        "randomize_document_order": {
+          "name": "randomize_document_order",
+          "required": false,
+          "default_value": ""
+        },
+        "collaborative_annotation": {
+          "name": "collaborative_annotation",
+          "required": false,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "role_mappings": {
+      "id": "role_mappings",
+      "app": "api",
+      "name": "rolemapping",
+      "fields": {
+        "user": {
+          "name": "user",
+          "required": true,
+          "default_value": ""
+        },
+        "project": {
+          "name": "project",
+          "required": true,
+          "default_value": ""
+        },
+        "role": {
+          "name": "role",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "roles": {
+      "id": "roles",
+      "app": "api",
+      "name": "role",
+      "fields": {
+        "name": {
+          "name": "name",
+          "required": true,
+          "default_value": ""
+        },
+        "description": {
+          "name": "description",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "seq2seq_annotations": {
+      "id": "seq2seq_annotations",
+      "app": "api",
+      "name": "seq2seqannotation",
+      "fields": {
+        "prob": {
+          "name": "prob",
+          "required": true,
+          "default_value": ""
+        },
+        "manual": {
+          "name": "manual",
+          "required": false,
+          "default_value": ""
+        },
+        "user": {
+          "name": "user",
+          "required": true,
+          "default_value": ""
+        },
+        "document": {
+          "name": "document",
+          "required": true,
+          "default_value": ""
+        },
+        "text": {
+          "name": "text",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "seq2seq_projects": {
+      "id": "seq2seq_projects",
+      "app": "api",
+      "name": "seq2seqproject",
+      "fields": {
+        "name": {
+          "name": "name",
+          "required": true,
+          "default_value": ""
+        },
+        "description": {
+          "name": "description",
+          "required": true,
+          "default_value": ""
+        },
+        "guideline": {
+          "name": "guideline",
+          "required": true,
+          "default_value": ""
+        },
+        "users": {
+          "name": "users",
+          "required": true,
+          "default_value": ""
+        },
+        "project_type": {
+          "name": "project_type",
+          "required": true,
+          "default_value": ""
+        },
+        "randomize_document_order": {
+          "name": "randomize_document_order",
+          "required": false,
+          "default_value": ""
+        },
+        "collaborative_annotation": {
+          "name": "collaborative_annotation",
+          "required": false,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "sequence_annotations": {
+      "id": "sequence_annotations",
+      "app": "api",
+      "name": "sequenceannotation",
+      "fields": {
+        "prob": {
+          "name": "prob",
+          "required": true,
+          "default_value": ""
+        },
+        "manual": {
+          "name": "manual",
+          "required": false,
+          "default_value": ""
+        },
+        "user": {
+          "name": "user",
+          "required": true,
+          "default_value": ""
+        },
+        "document": {
+          "name": "document",
+          "required": true,
+          "default_value": ""
+        },
+        "label": {
+          "name": "label",
+          "required": true,
+          "default_value": ""
+        },
+        "start_offset": {
+          "name": "start_offset",
+          "required": true,
+          "default_value": ""
+        },
+        "end_offset": {
+          "name": "end_offset",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "sequence_labeling_projects": {
+      "id": "sequence_labeling_projects",
+      "app": "api",
+      "name": "sequencelabelingproject",
+      "fields": {
+        "name": {
+          "name": "name",
+          "required": true,
+          "default_value": ""
+        },
+        "description": {
+          "name": "description",
+          "required": true,
+          "default_value": ""
+        },
+        "guideline": {
+          "name": "guideline",
+          "required": true,
+          "default_value": ""
+        },
+        "users": {
+          "name": "users",
+          "required": true,
+          "default_value": ""
+        },
+        "project_type": {
+          "name": "project_type",
+          "required": true,
+          "default_value": ""
+        },
+        "randomize_document_order": {
+          "name": "randomize_document_order",
+          "required": false,
+          "default_value": ""
+        },
+        "collaborative_annotation": {
+          "name": "collaborative_annotation",
+          "required": false,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "text_classification_projects": {
+      "id": "text_classification_projects",
+      "app": "api",
+      "name": "textclassificationproject",
+      "fields": {
+        "name": {
+          "name": "name",
+          "required": true,
+          "default_value": ""
+        },
+        "description": {
+          "name": "description",
+          "required": true,
+          "default_value": ""
+        },
+        "guideline": {
+          "name": "guideline",
+          "required": true,
+          "default_value": ""
+        },
+        "users": {
+          "name": "users",
+          "required": true,
+          "default_value": ""
+        },
+        "project_type": {
+          "name": "project_type",
+          "required": true,
+          "default_value": ""
+        },
+        "randomize_document_order": {
+          "name": "randomize_document_order",
+          "required": false,
+          "default_value": ""
+        },
+        "collaborative_annotation": {
+          "name": "collaborative_annotation",
+          "required": false,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "tokens": {
+      "id": "tokens",
+      "app": "authtoken",
+      "name": "token",
+      "fields": {
+        "user": {
+          "name": "user",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "groups": {
+      "id": "groups",
+      "app": "auth",
+      "name": "group",
+      "fields": {
+        "name": {
+          "name": "name",
+          "required": true,
+          "default_value": ""
+        },
+        "permissions": {
+          "name": "permissions",
+          "required": false,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "users": {
+      "id": "users",
+      "app": "auth",
+      "name": "user",
+      "fields": {
+        "username": {
+          "name": "username",
+          "required": true,
+          "default_value": ""
+        },
+        "password1": {
+          "name": "password1",
+          "required": true,
+          "default_value": ""
+        },
+        "password2": {
+          "name": "password2",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "associations": {
+      "id": "associations",
+      "app": "social_django",
+      "name": "association",
+      "fields": {
+        "server_url": {
+          "name": "server_url",
+          "required": true,
+          "default_value": ""
+        },
+        "handle": {
+          "name": "handle",
+          "required": true,
+          "default_value": ""
+        },
+        "secret": {
+          "name": "secret",
+          "required": true,
+          "default_value": ""
+        },
+        "issued": {
+          "name": "issued",
+          "required": true,
+          "default_value": ""
+        },
+        "lifetime": {
+          "name": "lifetime",
+          "required": true,
+          "default_value": ""
+        },
+        "assoc_type": {
+          "name": "assoc_type",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "nonces": {
+      "id": "nonces",
+      "app": "social_django",
+      "name": "nonce",
+      "fields": {
+        "server_url": {
+          "name": "server_url",
+          "required": true,
+          "default_value": ""
+        },
+        "timestamp": {
+          "name": "timestamp",
+          "required": true,
+          "default_value": ""
+        },
+        "salt": {
+          "name": "salt",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    },
+    "user_social_auths": {
+      "id": "user_social_auths",
+      "app": "social_django",
+      "name": "usersocialauth",
+      "fields": {
+        "user": {
+          "name": "user",
+          "required": true,
+          "default_value": ""
+        },
+        "provider": {
+          "name": "provider",
+          "required": true,
+          "default_value": ""
+        },
+        "uid": {
+          "name": "uid",
+          "required": true,
+          "default_value": ""
+        },
+        "extra_data": {
+          "name": "extra_data",
+          "required": true,
+          "default_value": ""
+        }
+      },
+      "can_add": true
+    }
+  },
+  "version": "1.0",
+  "name": "Doccano"
+}

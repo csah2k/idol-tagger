@@ -82,9 +82,12 @@ def set_user_task(self, username:str, task:dict):
         query = {"username": username, '_id': ObjectId(task['_id'])}
     elif username == ADMIN_USERNAME: # id is not necessary for admin tasks
         query = {"username": username, "name":getTaskName(task)}
+    # hande type
     if query != None and task.get('type', None) != None:
         query.update({ "type" : task.get('type') })
+    if task.get('type', None) == None:
 
+    
     # ==== safety checks ====
     # check valid task type
     if task.get('type', None) not in self.tasks_defaults.keys():
@@ -93,12 +96,12 @@ def set_user_task(self, username:str, task:dict):
         return getErrMsg(er)
 
     # ==== other tasks validations ====
-    if task.get('type',None) == "import_from_index":
+    if task.get('type', None) == "import_from_index":
         # check if user has access to projectid if any
         proj_id = task.get('params',{}).get('projectid',None)
         if proj_id != None: 
             user = self.mongo_users.find_one({"username": username})
-            proj = self.mongo_projects.find_one({"id":proj_id, "users":[user['id']] })
+            proj = self.mongo_projects.find_one({"id":proj_id, "users":{"$in":[user['id']]} })
             if proj == None :
                 er = f"User {user['id']} project {proj_id} not found @ '{username}'"
                 self.logging.error(er)
@@ -134,22 +137,6 @@ def set_user_task(self, username:str, task:dict):
 
     
 
-def getDocFilters(doc):
-    #references = doc.get(f'{FIELDPREFIX_FILTER}_REFS', [])
-    #dbname = doc.get(f'{FIELDPREFIX_FILTER}_DBS', [])
-    links = doc.get(f'{FIELDPREFIX_FILTER}_LNKS', [])
-    #prefix = FIELDPREFIX_FILTER.lower()
-    return {
-        #f'{prefix}_databases': ','.join(dbname),
-        #f'{prefix}_references': ','.join(references),
-        f'LINKS': ','.join(doc.get(f'{FIELDPREFIX_FILTER}_LNKS', []))
-    }
-
-def getProjectLastRuntime(project, db):
-    table = db['executions']
-    return table.find(order_by='-runtime', _limit=1)
-    #for row in results:
-    #    print(f"row['runtime']")
 
 def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False):
         datafile = None
@@ -176,15 +163,6 @@ def getLogLvl(cfg):
     if loglvl == None: loglvl = logging.FATAL if lvl == 'FATAL' else None
     return loglvl
 
-'''
-def get_curr_thread_cpu_percent(interval=0.1):
-    return get_threads_cpu_percent(threading.currentThread(), interval)
-
-def get_threads_cpu_percent(p, interval=0.1):
-   total_percent = p.cpu_percent(interval)
-   total_time = sum(p.cpu_times())
-   return [total_percent * ((t.system_time + t.user_time)/total_time) for t in p.threads()]
-'''
 
 class JSONEncoder(json.JSONEncoder):
     def default(self, o):

@@ -25,7 +25,8 @@ from flask import Flask, request, jsonify
 class Service:
     
     def __init__(self, logging, config): 
-        numthreads = config['service'].get('threads',4) 
+        #numthreads = config['service'].get('threads',4) 
+        self.running = False
         self.logging = logging 
         self.config = config
         self.tasks_defaults = config.get('tasks_defaults',{})
@@ -51,12 +52,18 @@ class Service:
         self.index = elastic.Service(self.logging, self.config)
         self.doccano = doccano.Service(self.logging, self.config, self.mongodb, self.index)
         self.scheduler = scheduler.Service(self.logging, self.config, self.mongodb, self.doccano, self.index)
-        logging.info(f"All services running!")
+        if self.index.running and self.doccano.running:
+            logging.info(f"All services running!")
+            self.running = True
+        else:
+            er = f"Required services not running! [Elastic running: {self.index.running}, Doccano running: {self.doccano.running}]"
+            logging.error(er)
 
     def start(self):
-        # tasks scheduler setup
-        self.setup_system_tasks()
-        self.scheduler.start()
+        if self.running:
+            # tasks scheduler setup
+            self.setup_system_tasks()
+            self.scheduler.start()
 
     def setup_system_tasks(self):
         tasks = self.config.get('system_tasks',[])

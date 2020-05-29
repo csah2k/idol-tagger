@@ -1,6 +1,8 @@
 *.log
 *.tmp
+src/django-admin-client
 src/doccano_api_client
+src/doccano-client
 src/doccano
 index/elastic/elastic*
 index/mongo/mongodb*

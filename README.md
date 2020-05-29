@@ -16,9 +16,9 @@ References:
 
 ## Requirements
 
->sudo apt install git python3 python3-pip docker-compose
+>sudo apt install git python3 python3-pip docker-compose gunicorn
 
->pip3 install gunicorn spacy feedparser html2text retrying plac elasticsearch pymongo django-admin-client
+>pip3 install gunicorn flask spacy feedparser html2text retrying plac elasticsearch pymongo django-admin-client
 
 >python3 -m spacy download en_core_web_sm<br/>
 python3 -m spacy download pt_core_news_sm<br/>
@@ -37,3 +37,7 @@ sh ./install.sh
 sh ./start.sh
 
 > python3 main.py
+
+ports 3000, 8000, 8080, 9100, 9200
+
+> sudo ufw allow from any to any port XXX proto tcp
