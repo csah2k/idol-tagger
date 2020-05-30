@@ -58,17 +58,36 @@ def getDocDate(doc):
     return doc.get('DATE', doc.get('DREDATE', doc.get('TIMESTAMP', [''] )))[0]   
 
 def getTaskName(task:dict):
-    return task.get('name', f"{task.get('type','<type?>')}-{task.get('_id',task.get('id',''))}")
+    return task.get('name', f"{task.get('type','')}-{task.get('_id',task.get('id',''))}")
 
 def getTaskUser(task:dict):
     return task.get('user',{}).get('username',task.get('username','anonymous'))
 
-def merge_default_task_config(self, task:dict):
-    _task = self.tasks_defaults.get(task.get('type','default'),{}).copy()
-    _params = _task.get('params',{}).copy()
-    _params.update(task.get('params',{}))
-    _task.update(task)
+
+def filter_default_task_config(self, task:dict):
+    _task = {}
+    _params = {}
+    for k,_v in self.tasks_defaults.get(task.get('type','default'),{}).get('params',{}).items():
+        tv = task.get('params',{}).get(k, None)
+        if tv != None: _params[k] = tv
+    #self.logging.warn(f"_params: {_params}")
+    for k,_v in self.tasks_defaults.get(task.get('type','default'),{}).items():
+        tv = task.get(k, None)
+        if tv != None: _task[k] = tv
     _task['params'] = _params
+    #self.logging.warn(f"_task: {_task}")
+    return _task
+
+def merge_default_task_config(self, task:dict):
+    _task = {}
+    _params = {}
+    for k,v in self.tasks_defaults.get(task.get('type','default'),{}).get('params',{}).items():
+        _params[k] = task.get('params',{}).get(k, v)
+    #self.logging.warn(f"_params: {_params}")
+    for k,v in self.tasks_defaults.get(task.get('type','default'),{}).items():
+        _task[k] = task.get(k, v)
+    _task['params'] = _params
+    #self.logging.warn(f"_task: {_task}")
     return _task
 
 def getErrMsg(error):
@@ -77,66 +96,75 @@ def getErrMsg(error):
     }
 
 def set_user_task(self, username:str, task:dict):
-    query = None
-    if task.get('_id', None) != None:
-        query = {"username": username, '_id': ObjectId(task['_id'])}
-    elif username == ADMIN_USERNAME: # id is not necessary for admin tasks
-        query = {"username": username, "name":getTaskName(task)}
-    # hande type
-    if query != None and task.get('type', None) != None:
-        query.update({ "type" : task.get('type') })
-    if task.get('type', None) == None:
-
+    ## try find task basic metadata for identification
+    user = (self.mongo_users.find_one({"username": username}) or {})
+    is_update = False
+    task_basic = {
+        "username": user.get('username', username), 
+        "name": getTaskName(task)
+    }
+    if task.get('_id', None) != None: # if has "_id" then it is a update
+        is_update = True
+        task_basic['_id'] = ObjectId(str(task['_id']))
+    if task.get('type', None) in self.tasks_defaults.keys(): # filter invalid task types
+        task_basic['type'] = task['type']
     
-    # ==== safety checks ====
-    # check valid task type
-    if task.get('type', None) not in self.tasks_defaults.keys():
-        er = f"Invalid task type: '{task.get('type', None)}'"
-        self.logging.error(f"{er} @ '{username}'")
-        return getErrMsg(er)
+    # create mongo query based on the metadata
+    query = task_basic.copy()
+    if is_update: query.pop("name", None)
+    else: query.pop("_id", None)
 
-    # ==== other tasks validations ====
-    if task.get('type', None) == "import_from_index":
-        # check if user has access to projectid if any
-        proj_id = task.get('params',{}).get('projectid',None)
-        if proj_id != None: 
-            user = self.mongo_users.find_one({"username": username})
-            proj = self.mongo_projects.find_one({"id":proj_id, "users":{"$in":[user['id']]} })
-            if proj == None :
-                er = f"User {user['id']} project {proj_id} not found @ '{username}'"
-                self.logging.error(er)
-                return getErrMsg(er)
-
-    ## TODO ??? white list of allowed key names in task object
-    
-    task.update({"username": username})
-    task = merge_default_task_config(self, task)
-    task.update({
-        "nextruntime": int(time.time()) if task.get('startrun',False) else int(time.time())+task.get('interval',60),
-        "lastruntime": task.get('lastruntime', 0),
-        "avgruntime": task.get('avgruntime', 0.0),
-        #"avgcpuusage": task.get('avgcpuusage', 0.0),
-        "running": False,
-        "error": None
-    })
-    _id = task.pop('_id', None)
-    if query == None or self.mongo_tasks.count_documents(query)<=0:      
-        # new user task   
-        _id = str(self.mongo_tasks.insert_one(task).inserted_id)
-        self.logging.info(f"Task added: '{_id}' @ '{username}'")
-    else:
-        # update task
+    # try find the original task
+    updated_task = {}
+    stored_task = self.mongo_tasks.find_one(query)
+    if stored_task == None: # INSERT NEW TASK
+        # default fields
+        updated_task = merge_default_task_config(self, task)
+        # stats fields
+        updated_task.update({
+            "nextruntime": int(time.time()) if task.get('startrun', updated_task.get('startrun', False)) else int(time.time())+task.get('interval', updated_task.get('interval', 60)),
+            "lastruntime": task.get('lastruntime', updated_task.get('lastruntime', 0)),
+            "avgruntime": task.get('avgruntime', updated_task.get('avgruntime', 0.0),),
+            "startrun": task.get('startrun', updated_task.get('startrun', False)),
+            "enabled": task.get('enabled', updated_task.get('enabled', False))
+        })
+        # novas tasks tem que ter um tipo
+        if task_basic.get('type', None) == None:
+            er = f"No valid task type supplied"
+            self.logging.error(f"{er} @ '{username}'")
+            return getErrMsg(er)
+    else: ## UPDATE TASK
+        # update task - assure that basic and control fields remain untouched
         task.pop('type', None)
         task.pop('error', None)
         task.pop('running', None)
-        self.mongo_tasks.update_one(query, {"$set": task})
-        self.logging.info(f"Task updated '{_id or getTaskName(task)}' @ '{username}'")
+        task.pop('username', None)
+        task.pop('avgruntime', None)
+        task.pop('nextruntime', None)
+        task.pop('lastruntime', None)
+        updated_task = filter_default_task_config(self, task)
+        # stats fields
+        updated_task.update({
+            "nextruntime": int(time.time()) if task.get('startrun', stored_task.get('startrun', False)) else int(time.time())+task.get('interval', stored_task.get('interval', 60)),
+            "startrun": task.get('startrun', stored_task.get('startrun', False))
+        })
 
-    task['_id'] = _id
-    return task
+    # check if user has access to the doccano project_id if any
+    proj_id = task.get('params',{}).get('projectid',None)
+    if proj_id != None:
+        if user.get('id', None) == None or self.mongo_projects.find_one({"id":proj_id, "users":{"$in":[user['id']]} }) == None :
+            er = f"User '{username}' has No access in project {proj_id}"
+            self.logging.error(er)
+            return getErrMsg(er)
 
+    # update/insert in mongodb, dynamic triple key: ( _id, username, type) or ( name, username, type)
+    updated_task.update(task_basic)
+    self.mongo_tasks.update_one(query, {"$set": updated_task}, upsert=True)
+
+    self.logging.info(f"Task updated {updated_task}")
     
-
+    #self.logging.info(f"Task updated '{updated_task['name']}' ({updated_task['_id']}) @ '{updated_task['username']}'")
+    return updated_task
 
 def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False):
         datafile = None

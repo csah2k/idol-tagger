@@ -1,2 +1,0 @@
-# doccano-admin-client
-

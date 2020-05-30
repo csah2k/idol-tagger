@@ -260,7 +260,7 @@ class Service:
             project = self.django_client.projects.get(prj_id).get('details',{})
             
             ## add export task in mongodb (system)
-            task = util.merge_default_task_config(self, {'type':'export_from_doccano', 'name':project['name'], 'params': {'projectid': prj_id}})
+            task = {'type':'export_from_doccano', 'name':project['name'], 'params': {'projectid': prj_id}, 'startrun': False}
             util.set_user_task(self, util.ADMIN_USERNAME, task)
 
             ## update/create project in mongodb

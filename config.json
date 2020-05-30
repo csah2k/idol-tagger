@@ -4,7 +4,7 @@
         "loglevel": "INFO",
         "maxtasks": 4,
         "mongodb": "mongodb://localhost:27017/",
-        "database": "index-flow",
+        "database": "idxflw",
         "storage": "./data"
     },
     
@@ -26,7 +26,6 @@
 
     "doccano":{
         "threads": 8,
-        "tempfolder": "data",
         "url": "http://localhost:80",
         "login":{
             "username": "admin",
@@ -73,7 +72,6 @@
         "export_from_doccano":{
             "name": "",
             "type": "export_from_doccano",
-            "projectid": "0",
             "enabled": true,
             "startrun": true,
             "interval": 3600,

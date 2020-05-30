@@ -12,7 +12,7 @@ from bson.objectid import ObjectId
 from services.elastic import Service as elasticService
 from services.doccano import Service as doccanoService
 
-pooling_interval_ms=3000
+pooling_interval_ms=10000
 task_timeout_sec=3600
 
 class Service:
@@ -41,15 +41,14 @@ class Service:
 
 
     def reset_tasks(self):
-        # set all tasks as NOT running
-        #curr_time = int(time.time())
-        query = {"enabled":True, "running":True}
+        query = {"running":True}
         self.mongo_tasks.update_many(query, {"$set":{"running":False}})
 
     @retry(wait_fixed=pooling_interval_ms)
     def handle_tasks(self):
         try:
             curr_time = int(time.time())
+            #self.logging.info(f"curr_time: {curr_time}") 
 
             # check for timeouted and done tasks to remove
             remove_tasks = []
@@ -66,6 +65,7 @@ class Service:
                 self.executing_tasks.pop(task_id)
 
             for task in self.mongo_tasks.find({"enabled": True, "running": False, "nextruntime": {"$lt": curr_time }}):
+                #self.logging.info(f"task found: {task}") 
                 task_id = str(task['_id'])
                 # check if tasks is already running
                 is_running = False
@@ -85,14 +85,12 @@ class Service:
             
     def runTask(self, task:dict):
         error = None
-        #task_result = {}
         start_time = time.time()
         try:
             # merge the user settings and the default config with current task
             username = util.getTaskUser(task)
             self.logging.info(f"Running task '{task.get('type','NO-TYPE')}' : '{util.getTaskName(task)}' @ '{username}'")
             user = self.mongo_users.find_one({'username': username})
-            task = util.merge_default_task_config(self, task)
             task.update({"user":user})
 
             # INDEX TASKS
@@ -126,12 +124,9 @@ class Service:
             curr_time = time.time()
             elapsed_time = curr_time - start_time
             avgruntime = (task.get('avgruntime',elapsed_time)+elapsed_time)/2
-            #cpu_usage = util.get_curr_thread_cpu_percent()  ## TODO
-            #self.logging.warn(cpu_usage)
             update = {
                 "running": False,
                 "avgruntime": avgruntime,
-                #"avgcpuusage": int((task('avgcpuusage',cpu_usage)+cpu_usage)/2),
                 "nextruntime": int(curr_time+task.get('interval',60))
             }
             if error != None: update['error'] = error

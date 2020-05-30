@@ -74,6 +74,9 @@ if __name__ == "__main__":
     logging.basicConfig(format='%(asctime)s (%(threadName)s) %(levelname)s - %(message)s', level=getLogLvl(config), handlers=[logging.FileHandler(config.get('service',{}).get('logfile','service.log'), 'w', 'utf-8')])
     logging.getLogger('elasticsearch').setLevel(logging.ERROR)
 
+    coreService = core.Service(logging, config)
+    coreService.start()
+
     host = config.get('service',{}).get('host','0.0.0.0')
     port = config.get('service',{}).get('port',8080)
     app.run(debug=False, use_reloader=False, host=host, port=port, threaded=True)
