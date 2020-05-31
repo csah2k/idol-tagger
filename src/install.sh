@@ -1,6 +1,5 @@
 #!/bin/bash
 echo "=============== Cloning doccano ==============="
-cd ..
 # https://github.com/doccano/doccano
 git clone https://github.com/doccano/doccano.git
 
@@ -10,9 +9,9 @@ git clone https://github.com/doccano/doccano.git
 #git clone https://github.com/harmw/doccano-client.git
 #git clone https://github.com/csah2k/doccano_api_client.git
 #cd doccano_api_client
-#git clone -b create-stuff https://github.com/csah2k/doccano-client.git
-#cd doccano-client
-#pip3 install ./
+git clone -b create-stuff https://github.com/csah2k/doccano-client.git
+cd doccano-client
+pip3 install ./
 
 #echo "=============== installing django admin client ==============="
 #git clone https://gitlab.com/y3g0r/django-admin-client.git

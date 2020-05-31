@@ -1,10 +1,10 @@
 #!/bin/bash
 # https://github.com/doccano/doccano
 # sudo docker-compose -f docker-compose.dev.yml up
-cd doccano
+#cd doccano
 #( sudo qterminal --execute "docker-compose -f docker-compose.dev.yml up" & ) > /dev/null 2>&1
-sudo docker-compose -f docker-compose.prod.yml up
-
+#sudo docker-compose -f docker-compose.prod.yml up
+sudo docker-compose -f doccano/docker-compose.dev.yml up
 
 #echo "wait..."
 #sleep 20
