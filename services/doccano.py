@@ -108,6 +108,7 @@ class Service:
     ### DOCCANO -> MONGODB
     def export_from_doccano(self, task:dict):
         # get project info
+        self.logging.warn(task)
         proj_id = task['params']['projectid']
         #proj = self.mongo_projects.find_one({"id":proj_id})
         #proj_type = proj['project_type'][0]
@@ -136,7 +137,7 @@ class Service:
         threads = [
             self.executor.submit(self._sync_role_mappings_with_mongodb),
             self.executor.submit(self._sync_projects_with_mongodb), 
-            self.executor.submit(self._sync_labels_with_mongodb),
+            self.executor.submit(self._sync_labels_with_mongodb), ## TODO remove labels ???
             self.executor.submit(self._sync_roles_with_mongodb),
             self.executor.submit(self._sync_users_with_mongodb),            
             self.executor.submit(self._assure_system_admin_rights)
@@ -147,9 +148,9 @@ class Service:
     def _assure_system_admin_rights(self):
         ###### assure that the admin user has admin_right on all projects ######
         ## find admin user doccano id
-        admin_userid = (self.mongo_users.find_one({"username":util.ADMIN_USERNAME}) or {}).get('id',None)
+        admin_userid = (self.mongo_users.find_one({"username":self.login['username']}) or {}).get('id',None)
         if admin_userid == None:
-            self.logging.warn(f"Admin user not found: '{util.ADMIN_USERNAME}'")
+            self.logging.warn(f"Admin user not found: '{self.login['username']}'")
             return False
         ## find project_admin role id
         project_admin_roleid = (self.mongo_roles.find_one({"name": "project_admin"}) or {}).get('id',None)
@@ -261,7 +262,7 @@ class Service:
             
             ## add export task in mongodb (system)
             task = {'type':'export_from_doccano', 'name':project['name'], 'params': {'projectid': prj_id}, 'startrun': False}
-            util.set_user_task(self, util.ADMIN_USERNAME, task)
+            util.set_user_task(self, self.login['username'], task)
 
             ## update/create project in mongodb
             project.update({"id":prj_id, "remove":False})
@@ -271,7 +272,7 @@ class Service:
         # handle removed projects & tasks
         remove_project_ids = self.mongo_projects.distinct('id', {"remove":True})
         if len(remove_project_ids) > 0:
-            self.mongo_tasks.delete_many({ "username": util.ADMIN_USERNAME, "projectid": {"$in":remove_project_ids} })
+            self.mongo_tasks.delete_many({ "username": self.login['username'], "projectid": {"$in":remove_project_ids} })
             removed = self.mongo_projects.delete_many({"remove":True})
             if removed.deleted_count > 0:
                 self.logging.info(f"Projects removed: {remove_project_ids}")

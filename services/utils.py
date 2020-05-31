@@ -14,7 +14,6 @@ from bson import Binary, Code
 from bson.json_util import dumps
 
 ALPHABET = string.ascii_letters + string.digits
-ADMIN_USERNAME = 'admin'
 FIELDPREFIX_FILTER = 'FILTERINDEX'
 FIELDSUFFIX_TAGGED = '_TAGGED'
 FIELDSUFFIX_TRAINED = '_TRAINED'

@@ -68,7 +68,7 @@ class Service:
     def setup_system_tasks(self):
         tasks = self.config.get('system_tasks',[])
         for task in tasks:
-            util.set_user_task(self, util.ADMIN_USERNAME, task) 
+            util.set_user_task(self, self.doccano.login['username'], task) 
 
     def get_user_indices(self, username:str):
         indices = self.mongo_users.find_one({'username': username}).get('indices',{})

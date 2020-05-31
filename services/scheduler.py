@@ -48,8 +48,6 @@ class Service:
     def handle_tasks(self):
         try:
             curr_time = int(time.time())
-            #self.logging.info(f"curr_time: {curr_time}") 
-
             # check for timeouted and done tasks to remove
             remove_tasks = []
             for task_id, task in self.executing_tasks.items():

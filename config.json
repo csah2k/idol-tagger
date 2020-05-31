@@ -50,7 +50,7 @@
             "startrun": true,
             "interval": 3600,
             "running": false,
-            "error": "",
+            "error": null,
             "params": { }
         },
         "import_from_index":{
@@ -60,7 +60,7 @@
             "startrun": true,
             "interval": 3600,
             "running": false,
-            "error": "",
+            "error": null,
             "params": { 
                 "projectid": "0",
                 "maxremaining": 50,
@@ -74,9 +74,9 @@
             "type": "export_from_doccano",
             "enabled": true,
             "startrun": true,
-            "interval": 3600,
+            "interval": 120,
             "running": false,
-            "error": "",
+            "error": null,
             "params": { 
                 "projectid": "0"
             }
@@ -88,7 +88,7 @@
             "startrun": true,
             "interval": 3600,
             "running": false,
-            "error": "",
+            "error": null,
             "params": {
                 "threads": 5,
                 "feeds": "data/feeds.rss"
@@ -101,7 +101,7 @@
             "startrun": true,
             "interval": 3600,
             "running": false,
-            "error": "",
+            "error": null,
             "params": {
                 "threads": 5,
                 "url": "https://finnhub.io/api/v1",
