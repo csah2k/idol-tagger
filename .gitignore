@@ -1,6 +1,5 @@
 *.log
 *.tmp
-src/doccano
 index/elastic/elastic*
 index/mongo/mongodb*
 __pycache__/
