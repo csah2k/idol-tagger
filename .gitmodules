@@ -2,3 +2,6 @@
 	path = src/doccano-client
 	url = https://github.com/csah2k/doccano-client.git
 	branch = create-stuff
+[submodule "src/doccano"]
+	path = src/doccano
+	url = https://github.com/doccano/doccano.git
