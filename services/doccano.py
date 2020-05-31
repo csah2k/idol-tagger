@@ -65,18 +65,14 @@ class Service:
     def import_from_index(self, task:dict):
         # get project info
         proj_id = task['params']['projectid']
-        #proj = self.mongo_projects.find_one({"id":proj_id})
-        #proj_type = proj['project_type'][0]
-
-        user_id = task['user']['id']
         indices = task['user']['indices']
-        #index_name = indices['indexdata']
+        #user_id = task['user']['id']
         index_query = { 'query': task['params']['query'] }
         # check if doccano is full of pending docs to tag
         statistics = self.doccano_client.get_project_statistics(proj_id)
         maxremaining = task['params'].get('maxremaining', 100)
         remaining = statistics.get('remaining', 0)
-        self.logging.info(f"import_from_index -> statistics: {statistics}")
+        self.logging.info(f"Importing into project {proj_id}: {statistics}")
         if remaining >= maxremaining:
             self.logging.warn(f"Doccano project '{task['name']}' is full [remaining: {remaining}, maxremaining: {maxremaining}]")
             return 0
@@ -92,6 +88,15 @@ class Service:
                 "index": hit.get('index',''),
                 "id": hit.get('id',hit.get('id',''))
             }
+            # IMPORT VIA DOCCANO API
+            res = self.doccano_client.create_document(proj_id, text, json.dumps(meta))
+            if (res or {}).get('id', 0) > 0:
+                imported += 1
+
+            # FLAG DOCUMENT IN INDEX
+
+            ''' 
+            ## IMPORT VIA DJANGO API
             doccano_doc = {
                 "text": text,
                 "project": [proj_id],
@@ -103,25 +108,24 @@ class Service:
             if not res.get('created', False):
                 self.logging.error(f"django_client.documents.add doc: {doccano_doc} -> error: {util.cleanDjangoError(res)}")
             else: imported += 1
+            '''
+        self.logging.info(f"Total imported into project {proj_id}: {imported}")
         return imported
 
     ### DOCCANO -> MONGODB
     def export_from_doccano(self, task:dict):
         # get project info
-        self.logging.warn(task)
         proj_id = task['params']['projectid']
-        #proj = self.mongo_projects.find_one({"id":proj_id})
-        #proj_type = proj['project_type'][0]
-
         #date = datetime.datetime.now().isoformat()
         resp = self.doccano_client.get_doc_download(int(proj_id), 'json')
         for line in resp.text.splitlines():
             doc = json.loads(line)            
-            # only done and approved 
-            if len(doc.get('annotation_approver','')) > 0 and len(doc.get('annotations',[])) > 0:
+            # only approved 
+            if doc.get('annotation_approver',None) != None: # and len(doc.get('annotations',[])) > 0:
                 doc.update({"projectid" : proj_id})
                 _id = str(self.mongo_documents.insert_one(doc).inserted_id)
-                if len(_id) > 5:
+                self.logging.info(f"_id: {_id}")
+                if _id != None:
                     res = self.doccano_client.delete_document(int(proj_id), doc.get('id'))
                     if 200 <= res.status_code < 300:
                         self.logging.info(f"Doc exported [doccano: {doc.get('id')}, mongodb: {_id}]")

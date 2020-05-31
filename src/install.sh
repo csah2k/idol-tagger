@@ -7,9 +7,10 @@ git clone https://github.com/doccano/doccano.git
 echo "=============== Cloning doccano_api_client ==============="
 # https://github.com/afparsons/doccano_api_client
 #git clone https://github.com/afparsons/doccano_api_client.git
+#git clone https://github.com/harmw/doccano-client.git
 #git clone https://github.com/csah2k/doccano_api_client.git
 #cd doccano_api_client
-git clone -b create-stuff https://github.com/harmw/doccano-client.git
+git clone -b create-stuff https://github.com/csah2k/doccano-client.git
 cd doccano-client
 pip3 install ./
 

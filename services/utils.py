@@ -69,12 +69,11 @@ def filter_default_task_config(self, task:dict):
     for k,_v in self.tasks_defaults.get(task.get('type','default'),{}).get('params',{}).items():
         tv = task.get('params',{}).get(k, None)
         if tv != None: _params[k] = tv
-    #self.logging.warn(f"_params: {_params}")
     for k,_v in self.tasks_defaults.get(task.get('type','default'),{}).items():
         tv = task.get(k, None)
         if tv != None: _task[k] = tv
-    _task['params'] = _params
-    #self.logging.warn(f"_task: {_task}")
+    if task.get('params', None) != None:
+        _task['params'] = _params
     return _task
 
 def merge_default_task_config(self, task:dict):
@@ -82,11 +81,10 @@ def merge_default_task_config(self, task:dict):
     _params = {}
     for k,v in self.tasks_defaults.get(task.get('type','default'),{}).get('params',{}).items():
         _params[k] = task.get('params',{}).get(k, v)
-    #self.logging.warn(f"_params: {_params}")
     for k,v in self.tasks_defaults.get(task.get('type','default'),{}).items():
         _task[k] = task.get(k, v)
-    _task['params'] = _params
-    #self.logging.warn(f"_task: {_task}")
+    if task.get('params', None) != None:
+        _task['params'] = _params
     return _task
 
 def getErrMsg(error):
@@ -99,12 +97,13 @@ def set_user_task(self, username:str, task:dict):
     user = (self.mongo_users.find_one({"username": username}) or {})
     is_update = False
     task_basic = {
-        "username": user.get('username', username), 
-        "name": getTaskName(task)
+        "username": user.get('username', username)
     }
     if task.get('_id', None) != None: # if has "_id" then it is a update
         is_update = True
         task_basic['_id'] = ObjectId(str(task['_id']))
+    if task.get('name', None) != None:
+        task_basic['name'] = task['name']
     if task.get('type', None) in self.tasks_defaults.keys(): # filter invalid task types
         task_basic['type'] = task['type']
     
@@ -133,36 +132,36 @@ def set_user_task(self, username:str, task:dict):
             self.logging.error(f"{er} @ '{username}'")
             return getErrMsg(er)
     else: ## UPDATE TASK
+        updated_task = stored_task.copy()
+        updated_task.update(task)
         # update task - assure that basic and control fields remain untouched
-        task.pop('type', None)
-        task.pop('error', None)
-        task.pop('running', None)
-        task.pop('username', None)
-        task.pop('avgruntime', None)
-        task.pop('nextruntime', None)
-        task.pop('lastruntime', None)
-        updated_task = filter_default_task_config(self, task)
+        updated_task.pop('type', None)
+        updated_task.pop('error', None)
+        updated_task.pop('running', None)
+        updated_task.pop('avgruntime', None)
+        updated_task.pop('nextruntime', None)
+        updated_task.pop('lastruntime', None)
         # stats fields
-        updated_task.update({
-            "nextruntime": int(time.time()) if task.get('startrun', stored_task.get('startrun', False)) else int(time.time())+task.get('interval', stored_task.get('interval', 60)),
-            "startrun": task.get('startrun', stored_task.get('startrun', False))
-        })
+        if task.get('startrun', False):
+            updated_task.update({
+                "nextruntime": int(time.time()) if task.get('startrun', stored_task.get('startrun', False)) else int(time.time())+task.get('interval', stored_task.get('interval', 60)),
+                "startrun": task.get('startrun', stored_task.get('startrun', False))
+            })
+    ### ========================================
 
     # check if user has access to the doccano project_id if any
-    proj_id = task.get('params',{}).get('projectid',None)
+    proj_id = updated_task.get('params',{}).get('projectid',None)
     if proj_id != None:
         if user.get('id', None) == None or self.mongo_projects.find_one({"id":proj_id, "users":{"$in":[user['id']]} }) == None :
             er = f"User '{username}' has No access in project {proj_id}"
-            self.logging.error(er)
+            self.logging.warn(er)
             return getErrMsg(er)
 
     # update/insert in mongodb, dynamic triple key: ( _id, username, type) or ( name, username, type)
     updated_task.update(task_basic)
     self.mongo_tasks.update_one(query, {"$set": updated_task}, upsert=True)
 
-    self.logging.info(f"Task updated {updated_task}")
-    
-    #self.logging.info(f"Task updated '{updated_task['name']}' ({updated_task['_id']}) @ '{updated_task['username']}'")
+    self.logging.info(f"Task updated: {updated_task}")
     return updated_task
 
 def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False):

@@ -94,7 +94,7 @@ class Service:
                         "as": "project_tasks"
                     }
                 },
-                {'$match':{'users':[user_id]}},
+                {'$match':{'users': {"$in":[user_id]}}},
                 {'$sort': { sort: order } }
             ]) ])
         return util.JSONEncoder().encode([])
