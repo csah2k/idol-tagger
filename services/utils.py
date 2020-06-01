@@ -8,6 +8,7 @@ import logging
 #import threading
 import html
 import html2text
+from copy import deepcopy
 from bson import ObjectId
 from requests.structures import CaseInsensitiveDict
 from bson import Binary, Code
@@ -133,7 +134,7 @@ def set_user_task(self, username:str, task:dict):
             return getErrMsg(er)
     else: ## UPDATE TASK
         updated_task = stored_task.copy()
-        updated_task.update(task)
+        updated_task.update(task) ## TODO MERGE PARAMS
         # update task - assure that basic and control fields remain untouched
         updated_task.pop('type', None)
         updated_task.pop('error', None)
@@ -160,8 +161,7 @@ def set_user_task(self, username:str, task:dict):
     # update/insert in mongodb, dynamic triple key: ( _id, username, type) or ( name, username, type)
     updated_task.update(task_basic)
     self.mongo_tasks.update_one(query, {"$set": updated_task}, upsert=True)
-
-    self.logging.info(f"Task updated: {updated_task}")
+    self.logging.info(f"Task updated {updated_task}")
     return updated_task
 
 def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False):
@@ -189,7 +189,17 @@ def getLogLvl(cfg):
     if loglvl == None: loglvl = logging.FATAL if lvl == 'FATAL' else None
     return loglvl
 
-
+def dict_of_dicts_merge(x, y):
+    z = {}
+    overlapping_keys = x.keys() & y.keys()
+    for key in overlapping_keys:
+        z[key] = dict_of_dicts_merge(x[key], y[key])
+    for key in x.keys() - overlapping_keys:
+        z[key] = deepcopy(x[key])
+    for key in y.keys() - overlapping_keys:
+        z[key] = deepcopy(y[key])
+    return z
+    
 class JSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, ObjectId):

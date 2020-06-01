@@ -72,17 +72,33 @@ class Service:
             total += self._index_document(doc, index)
         return total
 
-    def index_document(self, document:dict, index:str):
-        return self.executor.submit(self._index_document, document, index).result()
+    def index_document(self, document:dict, index:str, replace=True):
+        return self.executor.submit(self._index_document, document, index, replace).result()
 
-    def _index_document(self, document:dict, index:str):
+    def _index_document(self, document:dict, index:str, replace=True):
         try:
             _id = document.get('_id', document.get('id', document.get('ref', None)))
-            self.elastic.index(index=index, body=document, id=_id, pipeline='index-pipeline')
+            if replace:
+                self.elastic.index(index=index, body=document, id=_id, pipeline='index-pipeline')
+            else:
+                res = self.elastic.count(body={
+                    "query": {
+                        "terms": { "_id": [ _id ]  }
+                    }}, index=index)
+                if (res or {}).get('count',0) == 0:
+                    self.elastic.index(index=index, body=document, id=_id, pipeline='index-pipeline')
+                else:
+                    return 0
             return 1
         except Exception as error:
             self.logging.error(f"ElasticService: {error}")
             return 0
+
+    def remove_document(self, _id:str, index:str):
+        return self.executor.submit(self._remove_document, _id, index).result()
+
+    def _remove_document(self, _id:str, index:str):
+        return self.elastic.delete(index, _id)
 
     def query(self, query:dict, index:str): 
         return self.executor.submit(self._query, query, index).result()
@@ -128,6 +144,37 @@ class Service:
         except Exception as error:
             self.logging.error(f"ElasticSearch: {error}")
 
+    def update_field_value(self, index:str, _id:str, fieldname:str, value):
+        return self.executor.submit(self._update_field_value, index, _id, fieldname, value).result()
+
+    def _update_field_value(self, index:str, _id:str, fieldname:str, value):
+        body = {
+                "doc" : {
+                    fieldname : value
+                }
+            }
+        return self.elastic.update(index, _id, body)
+
+
+    def add_index_field(self, index:str, fieldname:str, _type="keyword"):
+        return self.executor.submit(self._add_index_field, index, fieldname, _type).result()
+
+    def _add_index_field(self, index:str, fieldname:str, _type:str):
+        curr_map = self.elastic.indices.get_mapping(index=index)
+        curr_prop = curr_map.get(index,{}).get('mappings',{}).get('properties',{})
+        if curr_prop.get(fieldname, None) != None:
+            self.logging.debug(f"field {fieldname} already exists in index {index}")
+            return {}
+        body = {
+            "properties": {
+                str(fieldname): {
+                    "type": _type
+                }
+            }
+        }
+        self.logging.debug(f"creating field {fieldname} in index {index}")
+        return self.elastic.indices.put_mapping(body, index=index)
+
     def create_index(self, index:str, filtr=False):
         return self.executor.submit(self._create_index, index, filtr).result()
 
@@ -157,8 +204,7 @@ class Service:
                     "src":      { "type": "keyword", "index": False },
                     "indextask":{ "type": "keyword"},
                     "task_id":  { "type": "keyword"},
-                    "filter":   { "type": "object"},
-                    "labels":   { "type": "object"}
+                    "filter":   { "type": "object"}
                 }
             try:
                 res = self.elastic.indices.create(index, body=body)

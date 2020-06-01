@@ -111,7 +111,7 @@ class Service:
                     }
                     for hit in filterHits:
                         doc['filter'][hit.get('id')] = hit.get('title')
-                    total_indexed_docs += self.index.index_document(doc, indices['indexdata'])
+                    total_indexed_docs += self.index.index_document(doc, indices['indexdata'], False)
             except Exception as error:
                 self.logging.error(f"feed entry: {link} -> error: {str(error)}")
                 total_errors_docs += 1

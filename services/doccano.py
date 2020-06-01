@@ -2,6 +2,7 @@
 
 import os
 import re
+import time
 import json
 import codecs
 import hashlib 
@@ -64,15 +65,30 @@ class Service:
     ### INDEX -> DOCCANO
     def import_from_index(self, task:dict):
         # get project info
+        #user_id = task['user']['id']
         proj_id = task['params']['projectid']
         indices = task['user']['indices']
-        #user_id = task['user']['id']
         index_query = { 'query': task['params']['query'] }
+        import_field = f"import_ts_prj_{proj_id}"
+        index_query = util.dict_of_dicts_merge(index_query, {
+            "query":{
+                "bool": {
+                    "must_not": {
+                        "exists": {
+                            "field": import_field
+                        }
+                    }
+                }
+            }})
+        ## assure required fields exists in the user index
+        self.index.add_index_field(indices['indexdata'], import_field, "long")
+
         # check if doccano is full of pending docs to tag
         statistics = self.doccano_client.get_project_statistics(proj_id)
         maxremaining = task['params'].get('maxremaining', 100)
         remaining = statistics.get('remaining', 0)
-        self.logging.info(f"Importing into project {proj_id}: {statistics}")
+        self.logging.info(f"Importing into project_{proj_id} {statistics}")
+        self.logging.info(f"project_{proj_id} index query {index_query}")
         if remaining >= maxremaining:
             self.logging.warn(f"Doccano project '{task['name']}' is full [remaining: {remaining}, maxremaining: {maxremaining}]")
             return 0
@@ -86,14 +102,14 @@ class Service:
                 "task": hit.get('indextask',hit.get('task_id','')),
                 "language": hit.get('language', hit.get('lang', 'unknow')),
                 "index": hit.get('index',''),
-                "id": hit.get('id',hit.get('id',''))
+                "id": hit['id']
             }
             # IMPORT VIA DOCCANO API
             res = self.doccano_client.create_document(proj_id, text, json.dumps(meta))
             if (res or {}).get('id', 0) > 0:
+                # ADD METADATA IN DOCUMENT TO AVOID IMPORT SAME DOC MULTIPLE TIMES
+                self.index.update_field_value(indices['indexdata'], hit['id'], import_field, int(time.time()))
                 imported += 1
-
-            # FLAG DOCUMENT IN INDEX
 
             ''' 
             ## IMPORT VIA DJANGO API
@@ -109,7 +125,7 @@ class Service:
                 self.logging.error(f"django_client.documents.add doc: {doccano_doc} -> error: {util.cleanDjangoError(res)}")
             else: imported += 1
             '''
-        self.logging.info(f"Total imported into project {proj_id}: {imported}")
+        self.logging.info(f"Total imported into project_{proj_id}: {imported}")
         return imported
 
     ### DOCCANO -> MONGODB
@@ -121,18 +137,17 @@ class Service:
         for line in resp.text.splitlines():
             doc = json.loads(line)            
             # only approved 
-            if doc.get('annotation_approver',None) != None: # and len(doc.get('annotations',[])) > 0:
+            if doc.get('annotation_approver',None) != None:
                 doc.update({"projectid" : proj_id})
                 _id = str(self.mongo_documents.insert_one(doc).inserted_id)
-                self.logging.info(f"_id: {_id}")
                 if _id != None:
                     res = self.doccano_client.delete_document(int(proj_id), doc.get('id'))
                     if 200 <= res.status_code < 300:
-                        self.logging.info(f"Doc exported [doccano: {doc.get('id')}, mongodb: {_id}]")
+                        self.logging.info(f"Doc exported [doccano: {doc.get('id')} -> mongodb: {_id}]")
                     else:
                         self.logging.error(f"Erro deleting from Doccano, code: {res.status_code}, proj_id: {proj_id}, doc_id: {doc.get('id')}")
                 else:
-                    self.logging.error(f"Erro inserting into MongoDB from Doccano -> proj_id: {proj_id}, doc_id: {doc.get('id')},  _id: {_id}")
+                    self.logging.error(f"Erro exporting -> proj_id: {proj_id}, doc_id: {doc.get('id')},  _id: {_id}")
 
 
     
@@ -237,23 +252,19 @@ class Service:
         for user_id in res['ids']:
             query = {"id": user_id}
             user = self.django_client.users.get(user_id).get('details',{})
-            if self.mongo_users.count_documents(query) <= 0:
-                user.update(query)
-                # generate indexes names
-                user.update({
-                    "indices": {
-                        "indexdata": str(hashlib.md5(("indexdata"+user.get('username',user_id)).encode("utf-8")).hexdigest()).lower(),
-                        "filters": str(hashlib.md5(("filters"+user.get('username',user_id)).encode()).hexdigest()).lower(),
-                    }
-                })
-                ## create user indicies in Elastic Server
-                self.index.initIndices(user['indices'])
-                ## add in mongodb
-                self.mongo_users.insert_one(user)
-                self.logging.info(f"User added '{user.get('username',user_id)}'")
-            else:
-                self.mongo_users.update_one(query, {"$set": user})
-                self.logging.debug(f"User updated '{user.get('username',user_id)}'")
+            user.update(query)
+            # generate indexes names
+            user.update({
+                "indices": {
+                    "indexdata": str(hashlib.md5(("indexdata"+user.get('username',user_id)).encode("utf-8")).hexdigest()).lower(),
+                    "filters": str(hashlib.md5(("filters"+user.get('username',user_id)).encode()).hexdigest()).lower(),
+                }
+            })
+            ## create user indicies in Elastic Server
+            self.index.initIndices(user['indices'])
+            ## add/update in mongodb
+            self.mongo_users.update_one(query, {"$set": user}, upsert=True)
+            self.logging.info(f"User updated '{user.get('username',user_id)}'")
 
     def _sync_projects_with_mongodb(self):
         # list all doccano projects
@@ -263,7 +274,7 @@ class Service:
         for prj_id in res['ids']:
             query = {"id": prj_id}
             project = self.django_client.projects.get(prj_id).get('details',{})
-            
+
             ## add export task in mongodb (system)
             task = {'type':'export_from_doccano', 'name':project['name'], 'params': {'projectid': prj_id}, 'startrun': False}
             util.set_user_task(self, self.login['username'], task)

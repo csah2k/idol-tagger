@@ -53,7 +53,7 @@ class Service:
         self.doccano = doccano.Service(self.logging, self.config, self.mongodb, self.index)
         self.scheduler = scheduler.Service(self.logging, self.config, self.mongodb, self.doccano, self.index)
         if self.index.running and self.doccano.running:
-            logging.info(f"All services running!")
+            logging.info(f"=========== All services running! ===========")
             self.running = True
         else:
             er = f"Required services not running! [Elastic running: {self.index.running}, Doccano running: {self.doccano.running}]"
