@@ -11,13 +11,14 @@ from retrying import retry
 from bson.objectid import ObjectId
 from services.elastic import Service as elasticService
 from services.doccano import Service as doccanoService
+from services.spacynlp import Service as spacynlpService
 
 pooling_interval_ms=10000
 task_timeout_sec=3600
 
 class Service:
     
-    def __init__(self, logging, config, mongodb, doccano:doccanoService, index:elasticService): 
+    def __init__(self, logging, config, mongodb, doccano:doccanoService, index:elasticService, spacynlp:spacynlpService): 
         maxtasks = config['service']['maxtasks']
         self.running = False
         self.executing_tasks = {}
@@ -25,6 +26,7 @@ class Service:
         self.config = config
         self.doccano = doccano
         self.index = index 
+        self.spacynlp = spacynlp
         self.mongo_tasks = mongodb['tasks']
         self.mongo_users = mongodb['users']
         self.mongo_projects = mongodb['projects']
@@ -32,7 +34,6 @@ class Service:
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=maxtasks+1, thread_name_prefix='Scheduler')
         self.logging.info(f"Scheduler service started  [mongodb: {mongodb.client}, {maxtasks} tasks]")
         
-
 
     def start(self):
         self.executor.submit(self.reset_tasks).result()
@@ -91,7 +92,7 @@ class Service:
             user = self.mongo_users.find_one({'username': username})
             task.update({"user":user})
 
-            # INDEX TASKS
+            # INDEX TASKS ## TODO ## DEVE SER UM MICROSERVIÇO ????
             if task['type'] == 'rss':  # enduser
                 _rss = rss.Service(self.logging, task, self.index)
                 _rss.index_feeds()
@@ -109,8 +110,7 @@ class Service:
             
             elif task['type'] == 'export_from_doccano': # SYSTEM
                 self.doccano.export_from_doccano(task) 
-                #spacyService = spacynlp.Service(self.logging, self.config, self.index)
-                #spacyService.train_project_model(task)
+                self.spacynlp.run_training_task(task)
                 
             elif task['type'] == 'sync_doccano_metadada':  # SYSTEM
                 self.doccano.sync_doccano_metadada()
@@ -121,7 +121,7 @@ class Service:
         finally:
             curr_time = time.time()
             elapsed_time = curr_time - start_time
-            avgruntime = (task.get('avgruntime',elapsed_time)+elapsed_time)/2
+            avgruntime = (task.get('avgruntime',elapsed_time)+elapsed_time)*0.5
             update = {
                 "running": False,
                 "avgruntime": avgruntime,

@@ -135,6 +135,8 @@ def set_user_task(self, username:str, task:dict):
     else: ## UPDATE TASK
         updated_task = stored_task.copy()
         updated_task.update(task) ## TODO MERGE PARAMS
+        updated_task['params'] = stored_task.get('params',{})
+        updated_task['params'].update(task.get('params',{}))
         # update task - assure that basic and control fields remain untouched
         updated_task.pop('type', None)
         updated_task.pop('error', None)
@@ -152,7 +154,7 @@ def set_user_task(self, username:str, task:dict):
 
     # check if user has access to the doccano project_id if any
     proj_id = updated_task.get('params',{}).get('projectid',None)
-    if proj_id != None:
+    if proj_id != None and (self.login or {}).get('username', None) != task_basic['username'] : # bypass for doccano admin user
         if user.get('id', None) == None or self.mongo_projects.find_one({"id":proj_id, "users":{"$in":[user['id']]} }) == None :
             er = f"User '{username}' has No access in project {proj_id}"
             self.logging.warn(er)

@@ -65,30 +65,37 @@ class Service:
     ### INDEX -> DOCCANO
     def import_from_index(self, task:dict):
         # get project info
-        #user_id = task['user']['id']
         proj_id = task['params']['projectid']
         indices = task['user']['indices']
-        index_query = { 'query': task['params']['query'] }
-        import_field = f"import_ts_prj_{proj_id}"
-        index_query = util.dict_of_dicts_merge(index_query, {
-            "query":{
-                "bool": {
-                    "must_not": {
-                        "exists": {
-                            "field": import_field
+        task_query = task['params'].get('query_text', None)
+        ## assure required fields exists in the user index
+        import_ts_field = f"import_ts_prj_{proj_id}"
+        export_ts_field = f"export_ts_prj_{proj_id}"
+        export_field = f"export_prj_{proj_id}"
+        self.index.add_index_field(indices['indexdata'], import_ts_field, "long")
+        self.index.add_index_field(indices['indexdata'], export_ts_field, "long")
+        self.index.add_index_field(indices['indexdata'], export_field, "object")
+        
+        # create the search query
+        index_query ={
+                "query":{
+                    "bool": {
+                        "must_not": {
+                            "exists": {
+                                "field": import_ts_field
+                            }
                         }
                     }
                 }
-            }})
-        ## assure required fields exists in the user index
-        self.index.add_index_field(indices['indexdata'], import_field, "long")
+            }
+        if task_query != None and len(str(task_query).strip()) > 1:
+            index_query['query']['bool']['must'] = { 'match': { "content": str(task_query).strip() } }
 
         # check if doccano is full of pending docs to tag
         statistics = self.doccano_client.get_project_statistics(proj_id)
         maxremaining = task['params'].get('maxremaining', 100)
         remaining = statistics.get('remaining', 0)
         self.logging.info(f"Importing into project_{proj_id} {statistics}")
-        self.logging.info(f"project_{proj_id} index query {index_query}")
         if remaining >= maxremaining:
             self.logging.warn(f"Doccano project '{task['name']}' is full [remaining: {remaining}, maxremaining: {maxremaining}]")
             return 0
@@ -108,30 +115,20 @@ class Service:
             res = self.doccano_client.create_document(proj_id, text, json.dumps(meta))
             if (res or {}).get('id', 0) > 0:
                 # ADD METADATA IN DOCUMENT TO AVOID IMPORT SAME DOC MULTIPLE TIMES
-                self.index.update_field_value(indices['indexdata'], hit['id'], import_field, int(time.time()))
-                imported += 1
-
-            ''' 
-            ## IMPORT VIA DJANGO API
-            doccano_doc = {
-                "text": text,
-                "project": [proj_id],
-                "meta": json.dumps(meta),
-                "annotations_approved_by": [user_id]
-            }
-            res = self.django_client.documents.add(doccano_doc)
-            # handle django fucking html format
-            if not res.get('created', False):
-                self.logging.error(f"django_client.documents.add doc: {doccano_doc} -> error: {util.cleanDjangoError(res)}")
-            else: imported += 1
-            '''
-        self.logging.info(f"Total imported into project_{proj_id}: {imported}")
+                _res = self.index.update_fields(indices['indexdata'], hit['id'], { import_ts_field : int(time.time()) } )
+                if (_res or {}).get('result',None) == 'updated':
+                    imported += 1
+                else:
+                    self.logging.error(f"Error updating index field -> {_res}")
+        self.logging.info(f"Total imported into project_{proj_id}: {imported}, query {index_query}")
         return imported
 
-    ### DOCCANO -> MONGODB
+    ### DOCCANO -> INDEX
     def export_from_doccano(self, task:dict):
         # get project info
         proj_id = task['params']['projectid']
+        export_ts_field = f"export_ts_prj_{proj_id}"
+        export_field = f"export_prj_{proj_id}"
         #date = datetime.datetime.now().isoformat()
         resp = self.doccano_client.get_doc_download(int(proj_id), 'json')
         for line in resp.text.splitlines():
@@ -139,15 +136,25 @@ class Service:
             # only approved 
             if doc.get('annotation_approver',None) != None:
                 doc.update({"projectid" : proj_id})
-                _id = str(self.mongo_documents.insert_one(doc).inserted_id)
-                if _id != None:
+                meta = doc.get('meta',{})
+                doc_id = meta.get('id',None)
+                doc_indx = meta.get('index',None)                
+                ## update a field in the elastic search
+                _res = self.index.update_fields(doc_indx, doc_id, 
+                    {
+                        export_ts_field: int(time.time()),
+                        export_field : doc.get('annotations',[]),
+                        'content': doc.get('text')
+                    })
+                
+                if (_res or {}).get('result',None) == 'updated':
                     res = self.doccano_client.delete_document(int(proj_id), doc.get('id'))
                     if 200 <= res.status_code < 300:
-                        self.logging.info(f"Doc exported [doccano: {doc.get('id')} -> mongodb: {_id}]")
+                        self.logging.info(f"Doc exported [doccano: {doc.get('id')} -> index: {doc_indx}, id: {doc_id}]")
                     else:
                         self.logging.error(f"Erro deleting from Doccano, code: {res.status_code}, proj_id: {proj_id}, doc_id: {doc.get('id')}")
                 else:
-                    self.logging.error(f"Erro exporting -> proj_id: {proj_id}, doc_id: {doc.get('id')},  _id: {_id}")
+                    self.logging.error(f"Error updating index field -> {_res}")
 
 
     
@@ -271,12 +278,13 @@ class Service:
         res = self.django_client.projects.all()
         # flag for removal
         _flag = self.mongo_projects.update_many({}, {"$set":{"remove":True}})
+        _flag = self.mongo_tasks.update_many({"username": self.login['username'], 'type':'export_from_doccano'}, {"$set":{"remove":True}})
         for prj_id in res['ids']:
             query = {"id": prj_id}
             project = self.django_client.projects.get(prj_id).get('details',{})
 
             ## add export task in mongodb (system)
-            task = {'type':'export_from_doccano', 'name':project['name'], 'params': {'projectid': prj_id}, 'startrun': False}
+            task = {'type':'export_from_doccano', 'name':project['name'], 'params': {'projectid': prj_id}, 'startrun': False, "remove":False}
             util.set_user_task(self, self.login['username'], task)
 
             ## update/create project in mongodb
@@ -285,12 +293,14 @@ class Service:
             self.logging.debug(f"Project updated '{project.get('name',prj_id)}'")
                 
         # handle removed projects & tasks
-        remove_project_ids = self.mongo_projects.distinct('id', {"remove":True})
-        if len(remove_project_ids) > 0:
-            self.mongo_tasks.delete_many({ "username": self.login['username'], "projectid": {"$in":remove_project_ids} })
-            removed = self.mongo_projects.delete_many({"remove":True})
-            if removed.deleted_count > 0:
-                self.logging.info(f"Projects removed: {remove_project_ids}")
+        #remove_project_ids = self.mongo_projects.distinct('id', {"remove":True})
+       # if len(remove_project_ids) > 0:
+        #del_query = { "username": self.login['username'], "params.projectid": {"$in":remove_project_ids} }
+        #self.logging.info(f"del_query: {del_query}")
+        removed = self.mongo_tasks.delete_many({"remove":True})
+        self.logging.info(f"Tasks removed: {removed.deleted_count}")
+        removed = self.mongo_projects.delete_many({"remove":True})
+        self.logging.info(f"Projects removed: {removed.deleted_count}")
     
 
 

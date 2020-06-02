@@ -10,7 +10,7 @@ import spacy
 from spacy.util import minibatch, compounding
 from requests.structures import CaseInsensitiveDict
 
-import services.doccano as doccano
+from services.elastic import Service as elasticService
 import services.utils as util
 
 # https://spacy.io/api
@@ -18,77 +18,146 @@ import services.utils as util
 
 class Service:
 
-    def __init__(self, logging, config, idol): 
+    def __init__(self, logging, config, mongodb, index:elasticService): 
+        self.running = False
         self.logging = logging 
-        self.config = config.get('spacynlp').copy()
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get('threads', 4), thread_name_prefix='SpacyPool')
-        self.doccano = doccano.Service(logging, config, idol)
-        self.idol = idol 
+        self.config = config
+        self.tasks_defaults = config.get('tasks_defaults',{})
+        self.cfg = config['spacynlp'].copy()
+        self.index = index 
+        self.mongo_tasks = mongodb['tasks']
+        self.mongo_users = mongodb['users']
+        self.mongo_roles = mongodb['roles']
+        self.mongo_labels = mongodb['labels']
+        self.mongo_projects = mongodb['projects']
+        self.mongo_role_mappings = mongodb['role_mappings']
+        numthreads = self.cfg.get('threads',2)
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=numthreads, thread_name_prefix='SpacyPool')
+        try:
+            self.logging.info(f"SpacyNlp service started [threads: {numthreads}]")
+            self.running = True
+        except Exception as error:
+            self.logging.error(f"cant start SpacyNlp service, error -> {str(error)}")
 
-
+    ############## INDEX HIT ##############
+    # {  
+    #   'id': '852fa73', 
+    #   'index': 'f628d93e02ab48b5ad5', 
+    #   'score': 100.0, 
+    #   'date': '2020-05-29T18:16:30.000Z', 
+    #   'src': 'http://rss.cnn.com/rss/edition_us.rss', 
+    #   'task_id': '5ed45f1c5ea2', 
+    #   'language': 'en', 
+    #   'title': 'This incredibly', 
+    #   'content': 'Tj maxx built its appeal on the "treasure hunt" shopping experience.', 
+    #   'url': 'http://rss.cnn.com/~r/rss/edition_us/~3/eifFUyevAw0/index.html', 
+    #   'indextask': 'Feeds de noticias',
+    #   'filter': JSON(), 
+    #   <export_field>: JSON()
+    # }
     
-    def generate_training_data(self, task:dict):
+    def run_training_task(self, task:dict):
         # get project info
-        proj_id = task['projectid']
+        proj_id = task['params']['projectid']
         proj = self.mongo_projects.find_one({"id":proj_id})
+        export_ts_field = f"export_ts_prj_{proj_id}"
+        export_field = f"export_prj_{proj_id}"
+        proj['export_ts_field'] = export_ts_field
+        proj['export_field'] = export_field
+        # get project labels
+        proj['labels'] = {}
+        for label in self.mongo_labels.find({"project":[proj_id]}):
+            proj['labels'][label.get('id')] = label.get('text')
+        # get admin users indices
+        users = proj.get('users', [])
+        indices = ','.join([_u['indices']['indexdata'] for _u in self.mongo_users.find({"id":{"$in":users}})])
+        proj['indices'] = indices
+        self.logging.info(f"generating proj_{proj_id} training data, indices: {indices}, labels: {proj['labels']}")
+
+        ## TODO support other projects/model types 
         proj_type = proj['project_type'][0]
         if proj_type == "DocumentClassification":
-            self.generate_training_doc_class(task, proj)
-        # TODO other types
-    
+            self.train_classifier_model(task, proj)
+        if proj_type == "SequenceLabeling":
+            self.train_ner_model(task, proj)
 
-    def generate_training_doc_class(self, task:dict, project:dict):
-        # get project labels
-        proj_id = project['id']
-        proj_labels = {}
-        for label in self.mongo_labels.find({"project":[proj_id]}):
-            proj_labels[label.get('id')] = label.get('text')
-        #self.logging.info(f"proj_labels: {proj_labels}")
+    # TODO
+    def generate_ner_data(self, proj:dict):
+        #_export_field = proj['export_field']
+        #_index_query = proj['index_query']
+        #_indices = proj['indices']
+        return None
 
-        lookup = { 
-            "from": "document_annotations",
-            "localField": "id",
-            "foreignField": "document",
-            "as": "annotations"
-        }
-        #self.logging.info(f"lookup: {lookup}")
-        for doc in self.mongo_documents.aggregate([
-                {"$lookup": lookup },
-                {"$match": {"project":[proj_id], "annotations": {"$exists": True, "$ne": []}  } },
-                #{'$sort': { sort: order } }
-            ]):
-            self.logging.info(f"doc to export: {doc}")
-            # TODO output somewhere in the correct format
-            
+    def generate_classifier_data(self, proj:dict):
+        export_field = proj['export_field']
+        index_query = proj['index_query']
+        indices = proj['indices']
+        # TODO buscar essas variaveis dos parametros do project ou do config
+        limit=100
+        split=0.8
+        train_data = []
+        # parse documents into expected 'spacy' format
+        for hit in self.index.query(index_query, indices):
+            self.logging.info(f"hit: {hit}")
+            hit_data = hit.get(export_field,{})
+            labels = [proj['labels'][str(_l.get('label'))] for _l in hit_data]
+            train_data.append((hit['content'], labels)) 
+        if len(train_data) > 1:
+            random.shuffle(train_data)
+            train_data = train_data[-limit:]
+            texts, labels = zip(*train_data)
+            # list categories (labels) from Doccano
+            labels_template = {}
+            for _l, text in proj['labels'].items():
+                labels_template[text] = False
+            # extract categories
+            cats = []
+            for _lbls in labels:
+                cat = labels_template.copy()
+                for _l in _lbls:
+                    cat.update({_l:True})
+                cats.append(cat)
+            # Partition off part of the train data for evaluation
+            split = int(len(train_data) * split)
+            return (texts[:split], cats[:split]), (texts[split:], cats[split:]), list(labels_template.keys())
+        return ([], []), ([], []), []
 
-        
-    def openProjectDB(self, project):        
-        dbfile, _, _ = util.getDataFilename(self.config, project, 'sqlite', 'db')
-        return dataset.connect(f'sqlite:///{dbfile}')
-    
-    def train_project_model(self, project):  
-        return self.executor.submit(self._train_project_model, project)
+    # TODO
+    def train_ner_model(self, task, proj):
+        return self.generate_ner_data(proj)
 
-    def _train_project_model(self, project):  
-        self.logging.info(f"==== Training model ====>  ({project.get('project')})")  
-        _project = self.doccano.populateProject(project)
-        projectType = _project.get('project_type').lower()
-        if projectType == 'documentclassification':
-            self.train_model_classifier(_project)
-        elif projectType == 'sequencelabeling':
-            self.train_model_ner(_project)
-        elif projectType == 'seq2seq':
-            self.train_model_sql(_project)
-        else:
-            self.logging.error(f"Doccano project_type not expected: {projectType}")
-
-    def train_model_classifier(self, project, model=None, output_dir=None, n_iter=20, n_texts=2000, init_tok2vec=None):  
-        languages = self.config.get('languages',{})
+    def train_classifier_model(self, task, proj):
+        # TODO buscar essas variaveis dos parametros da task, project ou self.config
+        model=None
+        output_dir=None
+        n_iter=20
+        n_texts=2000
+        init_tok2vec=None
+        languages = self.cfg.get('languages',{})
         self.logging.info(f"languages: {languages}")
         for lang, model in languages.items():
+            # data sample query selection
+            index_query = {
+                "query": {
+                    "bool" : {
+                        "must" : {
+                            "range" : {
+                                proj['export_ts_field'] : {
+                                    "gte" : 10, #task.get('lastruntime',10) # TODO DEBUG 
+                                }
+                            }
+                        },
+                        "filter": {
+                            "term" : { "language": lang }
+                        }
+                    }
+                }
+            }
+            proj['index_query'] = index_query
+            self.logging.info(f"index_query: {proj['index_query']}")
             # load correct dataset from index
             self.logging.info(f"Loading classifier data for language: {lang}")
-            (train_texts, train_cats), (dev_texts, dev_cats), categories = self.load_classifier_data(project, lang)
+            (train_texts, train_cats), (dev_texts, dev_cats), categories = self.generate_classifier_data(proj)
             if len(categories) == 0 or len(train_texts) == 0:
                 self.logging.info("No new training data found in index")
                 continue
@@ -108,7 +177,7 @@ class Service:
             self.logging.info(f"Categories: {categories}")
             for cat in categories:
                 textcat.add_label(cat)
-
+        
             train_texts = train_texts[:n_texts]
             train_cats = train_cats[:n_texts]
             self.logging.info(f"Using {n_texts} examples ({len(train_texts)} training, {len(dev_texts)} evaluation)")
@@ -146,7 +215,7 @@ class Service:
                     )
 
             # test the trained model
-            test_text = "Aggressive treatment against covid war in all countries"
+            test_text = "Social restrictions to fight covid virus benefits lula that was arrested in jail"
             doc = _nlp(test_text)
             best_cat = ('', 0)
             for _cat in doc.cats:
@@ -164,56 +233,10 @@ class Service:
                 nlp2 = spacy.load(output_dir)
                 doc2 = nlp2(test_text)
                 self.logging.info(test_text, doc2.cats)
-                
-    def load_classifier_data(self, project, language, limit=100, split=0.8):
-        train_data = []
-        # query documents from this project database in IDOL
-        query = {
-            'DatabaseMatch': project.get('database'),
-            'FieldText': f"TERM{{label}}:{project.get('datafield')}", ## tagged but not trained
-            'PrintFields': f"{project.get('datafield')},{project.get('textfield')}",
-            'AnyLanguage': False,
-            'MatchLanguageType': language,
-            'MaxResults': limit,
-            'Text': '*'
-        }
-        hits = self.idol.query(query)
-        self.logging.info(f"hits: {len(hits)}")
+    
 
-        # parse documents into expected 'spacy' format
-        for hit in hits:
-            text = hit['content']['DOCUMENT'][0][project.get('textfield')][0]
-            data = json.loads(hit['content']['DOCUMENT'][0][project.get('datafield')][0])
-            labels = [_l.get('label') for _l in data]
-            train_data.append((text, labels)) 
-        
-        if len(train_data) > 1:
-            random.shuffle(train_data)
-            train_data = train_data[-limit:]
-            texts, labels = zip(*train_data)
 
-            # list categories (labels) from Doccano
-            project_labels = self.doccano.get_label_list(project.get('id'))
-            labels_map = {}
-            labels_template = {}
-            for _l in project_labels:
-                labels_map[_l.get('id')] = _l.get('text')
-                labels_template[_l.get('text')] = False
-
-            self.logging.info(f"labels_map: {labels_map}")
-
-            # extract categories
-            cats = []
-            for _lbls in labels:
-                cat = labels_template.copy()
-                for _l in _lbls:
-                    cat.update({labels_map[_l]:True})
-                cats.append(cat)
-
-            # Partition off part of the train data for evaluation
-            split = int(len(train_data) * split)
-            return (texts[:split], cats[:split]), (texts[split:], cats[split:]), list(labels_template.keys())
-        return ([], []), ([], []), []
+            
 
     def train_model_ner(self, model=None, output_dir=None, n_iter=100):
         TRAIN_DATA = [] # TODO
@@ -290,10 +313,6 @@ class Service:
         train_data = []
         #[ ("E TEMPO DE APRENDER-MEU PRIMEIRO LIVRO (EDUCAÇÃO INFANTIL)", {"entities": [(0, 58, "LIVRO")]}), ]
         return train_data
-
-
-    def train_model_sql(self, project):
-        self.logging.wanr(f"not implemented")
 
     def evaluate(self, tokenizer, textcat, texts, cats):
         docs = (tokenizer(text) for text in texts)

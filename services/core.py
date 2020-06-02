@@ -9,6 +9,7 @@ import concurrent.futures
 import services.utils as util
 import services.elastic as elastic
 import services.doccano as doccano
+import services.spacynlp as spacynlp
 import services.scheduler as scheduler
 from requests.structures import CaseInsensitiveDict
 from flask import Flask, request, jsonify
@@ -51,7 +52,8 @@ class Service:
         # core services setup
         self.index = elastic.Service(self.logging, self.config)
         self.doccano = doccano.Service(self.logging, self.config, self.mongodb, self.index)
-        self.scheduler = scheduler.Service(self.logging, self.config, self.mongodb, self.doccano, self.index)
+        self.spacynlp = spacynlp.Service(self.logging, self.config, self.mongodb, self.index)
+        self.scheduler = scheduler.Service(self.logging, self.config, self.mongodb, self.doccano, self.index, self.spacynlp)
         if self.index.running and self.doccano.running:
             logging.info(f"=========== All services running! ===========")
             self.running = True

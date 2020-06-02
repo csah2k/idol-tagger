@@ -144,15 +144,11 @@ class Service:
         except Exception as error:
             self.logging.error(f"ElasticSearch: {error}")
 
-    def update_field_value(self, index:str, _id:str, fieldname:str, value):
-        return self.executor.submit(self._update_field_value, index, _id, fieldname, value).result()
+    def update_fields(self, index:str, _id:str, fields:dict):
+        return self.executor.submit(self._update_fields, index, _id, fields).result()
 
-    def _update_field_value(self, index:str, _id:str, fieldname:str, value):
-        body = {
-                "doc" : {
-                    fieldname : value
-                }
-            }
+    def _update_fields(self, index:str, _id:str, fields:dict):
+        body = { "doc" : fields  }
         return self.elastic.update(index, _id, body)
 
 
