@@ -54,23 +54,26 @@ class Service:
         self.doccano = doccano.Service(self.logging, self.config, self.mongodb, self.index)
         self.spacynlp = spacynlp.Service(self.logging, self.config, self.mongodb, self.index)
         self.scheduler = scheduler.Service(self.logging, self.config, self.mongodb, self.doccano, self.index, self.spacynlp)
-        if self.index.running and self.doccano.running:
-            logging.info(f"=========== All services running! ===========")
+        if self.index.running and self.doccano.running and self.spacynlp.running and self.scheduler.running:
+            logging.info(f"All services running! [Elastic: {'✔' if self.index.running else 'ERROR'}, Doccano: {'✔' if self.doccano.running else 'ERROR'}, SpacyNlp: {'✔' if self.spacynlp.running else 'ERROR'}, Scheduler: {'✔' if self.scheduler.running else 'ERROR'}]")
             self.running = True
         else:
-            er = f"Required services not running! [Elastic running: {self.index.running}, Doccano running: {self.doccano.running}]"
+            er = f"Required services not running! [Elastic: {'✔' if self.index.running else 'ERROR'}, Doccano: {'✔' if self.doccano.running else 'ERROR'}, SpacyNlp: {'✔' if self.spacynlp.running else 'ERROR'}, Scheduler: {'✔' if self.scheduler.running else 'ERROR'}]"
             logging.error(er)
 
     def start(self):
         if self.running:
-            # tasks scheduler setup
+            # core system tasks initial scheduling
             self.setup_system_tasks()
-            self.scheduler.start()
 
     def setup_system_tasks(self):
         tasks = self.config.get('system_tasks',[])
         for task in tasks:
             util.set_user_task(self, self.doccano.login['username'], task) 
+    
+    # ===== BOILERPLATE ??? ===========
+    def apply_project_model(self, username:str, proj_id:str, text:str):
+        return util.JSONEncoder().encode(dict(self.spacynlp.apply_project_model(username, proj_id, text)))
 
     def get_user_indices(self, username:str):
         indices = self.mongo_users.find_one({'username': username}).get('indices',{})

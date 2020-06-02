@@ -41,6 +41,12 @@ def tasks(username:str):
         ret = coreService.get_user_tasks(username)
     return Response(response=ret, status=200, mimetype="application/json")
 
+@app.route("/models/<username>/<proj_id>", methods = ['POST'])
+def models(username:str, proj_id:str):
+    ret = {}
+    if request.method == 'POST':
+        ret = coreService.apply_project_model(username, proj_id, request.json.get('text',None))
+    return Response(response=ret, status=200, mimetype="application/json")
 
 @app.route("/projects/<username>", methods = ['GET','POST'])
 def projects(username:str):

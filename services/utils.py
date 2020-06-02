@@ -154,7 +154,8 @@ def set_user_task(self, username:str, task:dict):
 
     # check if user has access to the doccano project_id if any
     proj_id = updated_task.get('params',{}).get('projectid',None)
-    if proj_id != None and (self.login or {}).get('username', None) != task_basic['username'] : # bypass for doccano admin user
+    system_username = self.doccano.login['username'] if hasattr(self, 'doccano') else self.login['username']
+    if proj_id != None and system_username != task_basic['username'] : # bypass for doccano admin user
         if user.get('id', None) == None or self.mongo_projects.find_one({"id":proj_id, "users":{"$in":[user['id']]} }) == None :
             er = f"User '{username}' has No access in project {proj_id}"
             self.logging.warn(er)
@@ -168,8 +169,10 @@ def set_user_task(self, username:str, task:dict):
 
 def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False):
         datafile = None
-        if sufx != None: datafile = f"{name}_{sufx}.{ext}"
-        else: datafile = f"{name}.{ext}"
+        if ext != None: ext = f".{ext.strip()}"
+        else: ext = ''
+        if sufx != None: datafile = f"{name}_{sufx}{ext}"
+        else: datafile = f"{name}{ext}"
         dataFolder = config.get('tempfolder', config.get('storage','data'))
         target_file = os.path.abspath(os.path.join(dataFolder, datafile))
         target_folder = os.path.dirname(target_file)

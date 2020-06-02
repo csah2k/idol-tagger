@@ -7,7 +7,7 @@ import logging
 import concurrent.futures
 from pathlib import Path
 import spacy
-from spacy.util import minibatch, compounding
+from spacy.util import minibatch, compounding, decaying
 from requests.structures import CaseInsensitiveDict
 
 from services.elastic import Service as elasticService
@@ -31,13 +31,58 @@ class Service:
         self.mongo_labels = mongodb['labels']
         self.mongo_projects = mongodb['projects']
         self.mongo_role_mappings = mongodb['role_mappings']
-        numthreads = self.cfg.get('threads',2)
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=numthreads, thread_name_prefix='SpacyPool')
+        self.numthreads = self.cfg.get('threads', 2)
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.numthreads, thread_name_prefix='SpacyPool')
+        self.running = self.executor.submit(self.initService).result()
+            
+            
+    def initService(self):
         try:
-            self.logging.info(f"SpacyNlp service started [threads: {numthreads}]")
-            self.running = True
+            self.loaded_models = {} ## LOAD ALL CUSTOM MODELS
+            _, model_dir, _ = util.getDataFilename(self.cfg, "projects")
+            for proj_id in os.listdir(model_dir):
+                for lang in os.listdir(os.path.join(model_dir, proj_id)):
+                    model =  os.path.abspath(os.path.join(model_dir, proj_id, lang))
+                    model_name = f"{proj_id}/{lang}"
+                    self.logging.info(f"loading model '{model_name}' in '{model}' ...")
+                    self.loaded_models[model_name] = spacy.load(model)  
+                    self.logging.info(f"model '{model_name}' loaded: {self.loaded_models[model_name]}")
+
+            self.logging.info(f"SpacyNlp service started [threads: {self.numthreads}, models: {len(self.loaded_models.keys())}]")
+            return True
         except Exception as error:
-            self.logging.error(f"cant start SpacyNlp service, error -> {str(error)}")
+            self.logging.error(f"SpacyNlp: {error}")
+            return False
+
+
+    def apply_project_model(self, username:str, proj_id:str, text:str, lang=None):
+        return self.executor.submit(self._apply_project_model, username, proj_id, text, lang).result()
+
+    def _apply_project_model(self, username:str, proj_id:str, text:str, lang=None):
+        self.logging.info(f"apply proj_{proj_id} model -> text: {text}")
+        # TODO check if user has any access to the project in mongo_role_mappings
+        if lang == None:
+            lang = self.index.detect_language(text)
+            self.logging.info(f"language detected: {lang}")
+        model_name = f"{proj_id}/{lang}"
+
+        if model_name not in self.loaded_models.keys():
+            err = f"model '{model_name}' not loaded"
+            self.logging.warn(err)
+            return { 'error': err }
+        
+        res = { }
+        doc = self.loaded_models[model_name](text)
+        if hasattr(doc, 'cats'):
+            res['cats'] = doc.cats
+
+        return res
+
+        
+
+
+
+
 
     ############## INDEX HIT ##############
     # {  
@@ -53,74 +98,38 @@ class Service:
     #   'url': 'http://rss.cnn.com/~r/rss/edition_us/~3/eifFUyevAw0/index.html', 
     #   'indextask': 'Feeds de noticias',
     #   'filter': JSON(), 
-    #   <export_field>: JSON()
+    #   <export_field>: JSON(),
+    #   <import_ts_field>: long,
+    #   <export_ts_field>: long,
+    #   <train_ts_field>: long
     # }
     
     def run_training_task(self, task:dict):
-        # get project info
-        proj_id = task['params']['projectid']
-        proj = self.mongo_projects.find_one({"id":proj_id})
-        export_ts_field = f"export_ts_prj_{proj_id}"
-        export_field = f"export_prj_{proj_id}"
-        proj['export_ts_field'] = export_ts_field
-        proj['export_field'] = export_field
-        # get project labels
-        proj['labels'] = {}
-        for label in self.mongo_labels.find({"project":[proj_id]}):
-            proj['labels'][label.get('id')] = label.get('text')
-        # get admin users indices
-        users = proj.get('users', [])
-        indices = ','.join([_u['indices']['indexdata'] for _u in self.mongo_users.find({"id":{"$in":users}})])
-        proj['indices'] = indices
-        self.logging.info(f"generating proj_{proj_id} training data, indices: {indices}, labels: {proj['labels']}")
-
-        ## TODO support other projects/model types 
-        proj_type = proj['project_type'][0]
-        if proj_type == "DocumentClassification":
-            self.train_classifier_model(task, proj)
-        if proj_type == "SequenceLabeling":
-            self.train_ner_model(task, proj)
-
-    # TODO
-    def generate_ner_data(self, proj:dict):
-        #_export_field = proj['export_field']
-        #_index_query = proj['index_query']
-        #_indices = proj['indices']
-        return None
-
-    def generate_classifier_data(self, proj:dict):
-        export_field = proj['export_field']
-        index_query = proj['index_query']
-        indices = proj['indices']
-        # TODO buscar essas variaveis dos parametros do project ou do config
-        limit=100
-        split=0.8
-        train_data = []
-        # parse documents into expected 'spacy' format
-        for hit in self.index.query(index_query, indices):
-            self.logging.info(f"hit: {hit}")
-            hit_data = hit.get(export_field,{})
-            labels = [proj['labels'][str(_l.get('label'))] for _l in hit_data]
-            train_data.append((hit['content'], labels)) 
-        if len(train_data) > 1:
-            random.shuffle(train_data)
-            train_data = train_data[-limit:]
-            texts, labels = zip(*train_data)
-            # list categories (labels) from Doccano
-            labels_template = {}
-            for _l, text in proj['labels'].items():
-                labels_template[text] = False
-            # extract categories
-            cats = []
-            for _lbls in labels:
-                cat = labels_template.copy()
-                for _l in _lbls:
-                    cat.update({_l:True})
-                cats.append(cat)
-            # Partition off part of the train data for evaluation
-            split = int(len(train_data) * split)
-            return (texts[:split], cats[:split]), (texts[split:], cats[split:]), list(labels_template.keys())
-        return ([], []), ([], []), []
+        # iterate all project id
+        for proj in self.mongo_projects.find({}):
+            # get project info
+            proj_id = proj['id']
+            train_ts_field = f"train_ts_prj_{proj_id}"
+            export_ts_field = f"export_ts_prj_{proj_id}"
+            export_field = f"export_prj_{proj_id}"
+            proj['train_ts_field'] = train_ts_field
+            proj['export_ts_field'] = export_ts_field
+            proj['export_field'] = export_field
+            # get project labels
+            proj['labels'] = {}
+            for label in self.mongo_labels.find({"project":[proj_id]}):
+                proj['labels'][label.get('id')] = label.get('text')
+            # get admin users indices
+            users = proj.get('users', [])
+            indices = ','.join([_u['indices']['indexdata'] for _u in self.mongo_users.find({"id":{"$in":users}})])
+            proj['indices'] = indices
+            #self.logging.info(f"generating proj_{proj_id} training data, indices: {indices}, labels: {proj['labels']}")
+            ## TODO support other projects/model types 
+            proj_type = proj['project_type'][0]
+            if proj_type == "DocumentClassification":
+                self.train_classifier_model(task, proj)
+            if proj_type == "SequenceLabeling":
+                self.train_ner_model(task, proj)
 
     # TODO
     def train_ner_model(self, task, proj):
@@ -128,13 +137,11 @@ class Service:
 
     def train_classifier_model(self, task, proj):
         # TODO buscar essas variaveis dos parametros da task, project ou self.config
-        model=None
-        output_dir=None
         n_iter=20
         n_texts=2000
         init_tok2vec=None
         languages = self.cfg.get('languages',{})
-        self.logging.info(f"languages: {languages}")
+        self.logging.debug(f"languages: {languages}")
         for lang, model in languages.items():
             # data sample query selection
             index_query = {
@@ -143,28 +150,39 @@ class Service:
                         "must" : {
                             "range" : {
                                 proj['export_ts_field'] : {
-                                    "gte" : 10, #task.get('lastruntime',10) # TODO DEBUG 
+                                    "gte" : 10, ## HAVE TRAINING DATA
                                 }
                             }
                         },
                         "filter": {
-                            "term" : { "language": lang }
+                            "term" : { "language": lang } # LANGUAGE MODEL
+                        },
+                        "must_not": {
+                            "exists": {
+                                "field": proj['train_ts_field'] ## NEW DATA ONLY
+                            }
                         }
                     }
                 }
             }
             proj['index_query'] = index_query
-            self.logging.info(f"index_query: {proj['index_query']}")
             # load correct dataset from index
-            self.logging.info(f"Loading classifier data for language: {lang}")
             (train_texts, train_cats), (dev_texts, dev_cats), categories = self.generate_classifier_data(proj)
             if len(categories) == 0 or len(train_texts) == 0:
-                self.logging.info("No new training data found in index")
+                # only load the model if is data to train
+                self.logging.debug(f"No new training data found in index for language: {lang}")
                 continue
+            
+            # check if already exists the taget model file, if so then load it, and update this existing model
+            model_file, _, _ = util.getDataFilename(self.cfg, f"{proj['id']}/{lang}", None, None)
+            _nlp = None
+            if os.path.exists(model_file): 
+                self.logging.info(f"Loading project model '{model_file}'")
+                _nlp = spacy.load(model_file)
+            else:  # fallback to language core model
+                self.logging.info(f"Loading default lang model '{model}'")
+                _nlp = spacy.load(model)
 
-            # only load the model if is data to train
-            self.logging.info("Loading model '%s'" % model)
-            _nlp = spacy.load(model)
             # add the text classifier to the pipeline if it doesn't exist
             if "textcat" not in _nlp.pipe_names:
                 textcat = _nlp.create_pipe("textcat", config={"exclusive_classes": True, "architecture": "simple_cnn"})
@@ -194,6 +212,7 @@ class Service:
                 self.logging.info("Training the model...")
                 self.logging.debug("{:^5}\t{:^5}\t{:^5}\t{:^5}".format("LOSS", "P", "R", "F"))
                 batch_sizes = compounding(4.0, 32.0, 1.001)
+                dropout = decaying(0.6, 0.2, 1e-4)
                 for _i in range(n_iter):
                     losses = {}
                     # batch up the examples using spaCy's minibatch
@@ -201,7 +220,8 @@ class Service:
                     batches = minibatch(train_data, size=batch_sizes)
                     for batch in batches:
                         texts, annotations = zip(*batch)
-                        _nlp.update(texts, annotations, sgd=optimizer, drop=0.2, losses=losses)
+                        _nlp.update(texts, annotations, sgd=optimizer, drop=next(dropout), losses=losses)
+                        #_nlp.update(texts, annotations, sgd=optimizer, drop=0.2, losses=losses)
                     with textcat.model.use_params(optimizer.averages):
                         # evaluate on the dev data split off in load_data()
                         scores = self.evaluate(_nlp.tokenizer, textcat, dev_texts, dev_cats)
@@ -215,7 +235,7 @@ class Service:
                     )
 
             # test the trained model
-            test_text = "Social restrictions to fight covid virus benefits lula that was arrested in jail"
+            test_text = "Numero de mortos pela pandemia do corona virus é o maior desde o inicio"
             doc = _nlp(test_text)
             best_cat = ('', 0)
             for _cat in doc.cats:
@@ -223,16 +243,60 @@ class Service:
                     best_cat = (_cat, doc.cats[_cat])
             self.logging.info(f"{best_cat} : {test_text}")
 
-            if output_dir is not None:
-                with _nlp.use_params(optimizer.averages):
-                    _nlp.to_disk(output_dir)
-                self.logging.info(f"Saved model to {output_dir}")
+            # save the model
+            with _nlp.use_params(optimizer.averages):
+                _nlp.to_disk(model_file)
+            self.logging.info(f"Saved model to {model_file}")
 
-                # test the saved model
-                self.logging.info(f"Loading from {output_dir}")
-                nlp2 = spacy.load(output_dir)
-                doc2 = nlp2(test_text)
-                self.logging.info(test_text, doc2.cats)
+            # test the saved model
+            self.logging.info(f"Loading from {model_file}")
+            nlp2 = spacy.load(model_file)            
+            doc2 = nlp2(test_text)
+            self.logging.info(f"{test_text} : {doc2.cats}")
+            self.loaded_models[f"{proj['id']}/{lang}"] = nlp2
+            self.logging.info(self.loaded_models)
+            
+
+
+    # TODO
+    def generate_ner_data(self, proj:dict):
+        #_export_field = proj['export_field']
+        #_index_query = proj['index_query']
+        #_indices = proj['indices']
+        return None
+
+    def generate_classifier_data(self, proj:dict, limit=100, split=0.8):
+        export_field = proj['export_field']
+        index_query = proj['index_query']
+        indices = proj['indices']      
+        train_data = []
+        # parse documents into expected 'spacy' format
+        for hit in self.index.query(index_query, indices):
+            self.logging.info(f"hit: {hit}")
+            hit_data = hit.get(export_field,{})
+            labels = [proj['labels'][str(_l.get('label'))] for _l in hit_data]
+            train_data.append((hit['content'], labels)) 
+        if len(train_data) > 1:
+            random.shuffle(train_data)
+            train_data = train_data[-limit:]
+            texts, labels = zip(*train_data)
+            # list categories (labels) from Doccano
+            labels_template = {}
+            for _l, text in proj['labels'].items():
+                labels_template[text] = False
+            # extract categories
+            cats = []
+            for _lbls in labels:
+                cat = labels_template.copy()
+                for _l in _lbls:
+                    cat.update({_l:True})
+                cats.append(cat)
+            # Partition off part of the train data for evaluation
+            split = int(len(train_data) * split)
+            return (texts[:split], cats[:split]), (texts[split:], cats[split:]), list(labels_template.keys())
+        return ([], []), ([], []), []
+
+    
     
 
 

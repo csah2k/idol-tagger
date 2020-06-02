@@ -17,6 +17,7 @@
     },
 
     "spacynlp":{
+        "storage": "./data/models",
         "languages":{
             "en" : "en_core_web_sm",
             "pt": "pt_core_news_sm",
@@ -35,9 +36,16 @@
 
     "system_tasks":[
         {
-            "name": "Sync metadada from Doccano",
+            "name": "Sync metadada with Doccano",
             "type": "sync_doccano_metadada",
-            "interval": 120
+            "interval": 120,
+            "enabled": true
+        },
+        {
+            "name": "Train projects into Models",
+            "type": "train_npl_models",
+            "interval": 300,
+            "enabled": true
         }
     ],
 
@@ -79,6 +87,16 @@
                 "projectid": "0"
             },
             "remove": false
+        },
+        "train_npl_models":{
+            "name": "",
+            "type": "train_npl_models",
+            "enabled": true,
+            "startrun": true,
+            "interval": 3600,
+            "running": false,
+            "error": null,
+            "params": { }
         },
         "rss": {
             "name": "RSS Feeds",

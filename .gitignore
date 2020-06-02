@@ -1,5 +1,6 @@
 *.log
 *.tmp
+data/models
 index/elastic/elastic*
 index/mongo/mongodb*
 __pycache__/

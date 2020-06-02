@@ -19,7 +19,7 @@ task_timeout_sec=3600
 class Service:
     
     def __init__(self, logging, config, mongodb, doccano:doccanoService, index:elasticService, spacynlp:spacynlpService): 
-        maxtasks = config['service']['maxtasks']
+        self.maxtasks = config['service']['maxtasks']
         self.running = False
         self.executing_tasks = {}
         self.logging = logging 
@@ -31,14 +31,18 @@ class Service:
         self.mongo_users = mongodb['users']
         self.mongo_projects = mongodb['projects']
         self.tasks_defaults = config.get('tasks_defaults',{})
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=maxtasks+1, thread_name_prefix='Scheduler')
-        self.logging.info(f"Scheduler service started  [mongodb: {mongodb.client}, {maxtasks} tasks]")
-        
-
-    def start(self):
-        self.executor.submit(self.reset_tasks).result()
-        self.executor.submit(self.handle_tasks)
-        self.running = True
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.maxtasks+1, thread_name_prefix='Scheduler')
+        self.running = self.executor.submit(self.initService).result()
+    
+    def initService(self):
+        try:
+            self.reset_tasks()
+            self.executor.submit(self.handle_tasks)
+            self.logging.info(f"Scheduler service started  [{self.maxtasks} tasks, mongodb: {self.mongo_tasks}]")
+            return True
+        except Exception as error:
+            self.logging.error(f"Scheduler: {error}")
+            return False
 
 
     def reset_tasks(self):
@@ -107,10 +111,12 @@ class Service:
             
             elif task['type'] == 'import_from_index': # enduser
                 self.doccano.import_from_index(task)
-            
+                        
+            elif task['type'] == 'train_npl_models': # SYSTEM
+                self.spacynlp.run_training_task(task)
+
             elif task['type'] == 'export_from_doccano': # SYSTEM
                 self.doccano.export_from_doccano(task) 
-                self.spacynlp.run_training_task(task)
                 
             elif task['type'] == 'sync_doccano_metadada':  # SYSTEM
                 self.doccano.sync_doccano_metadada()

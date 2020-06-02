@@ -71,9 +71,11 @@ class Service:
         ## assure required fields exists in the user index
         import_ts_field = f"import_ts_prj_{proj_id}"
         export_ts_field = f"export_ts_prj_{proj_id}"
+        train_ts_field = f"train_ts_prj_{proj_id}"
         export_field = f"export_prj_{proj_id}"
         self.index.add_index_field(indices['indexdata'], import_ts_field, "long")
         self.index.add_index_field(indices['indexdata'], export_ts_field, "long")
+        self.index.add_index_field(indices['indexdata'], train_ts_field, "long")
         self.index.add_index_field(indices['indexdata'], export_field, "object")
         
         # create the search query
@@ -163,7 +165,7 @@ class Service:
         threads = [
             self.executor.submit(self._sync_role_mappings_with_mongodb),
             self.executor.submit(self._sync_projects_with_mongodb), 
-            self.executor.submit(self._sync_labels_with_mongodb), ## TODO remove labels ???
+            self.executor.submit(self._sync_labels_with_mongodb),
             self.executor.submit(self._sync_roles_with_mongodb),
             self.executor.submit(self._sync_users_with_mongodb),            
             self.executor.submit(self._assure_system_admin_rights)
@@ -293,14 +295,10 @@ class Service:
             self.logging.debug(f"Project updated '{project.get('name',prj_id)}'")
                 
         # handle removed projects & tasks
-        #remove_project_ids = self.mongo_projects.distinct('id', {"remove":True})
-       # if len(remove_project_ids) > 0:
-        #del_query = { "username": self.login['username'], "params.projectid": {"$in":remove_project_ids} }
-        #self.logging.info(f"del_query: {del_query}")
         removed = self.mongo_tasks.delete_many({"remove":True})
-        self.logging.info(f"Tasks removed: {removed.deleted_count}")
+        self.logging.info(f"{removed.deleted_count} Tasks removed")
         removed = self.mongo_projects.delete_many({"remove":True})
-        self.logging.info(f"Projects removed: {removed.deleted_count}")
+        self.logging.info(f"{removed.deleted_count} Projects removed")
     
 
 
