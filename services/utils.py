@@ -181,6 +181,30 @@ def getDataFilename(config, name, sufx=None, ext='dat', trunc=False, delt=False)
         if delt and os.path.exists(target_file): os.remove(target_file)
         return target_file, target_folder, os.path.basename(target_file)
 
+def createTrainDataQuery(proj, lang):
+    return {
+            "from" : 0, "size" : 1000,
+            "query": {
+                "bool" : {
+                    "must" : {
+                        "range" : {
+                            proj['export_ts_field'] : {
+                                "gte" : 10, ## HAVE TRAINING DATA
+                            }
+                        }
+                    },
+                    "filter": {
+                        "term" : { "language": lang } # LANGUAGE MODEL
+                    },
+                    "must_not": {
+                        "exists": {
+                            "field": proj['train_ts_field'] ## NEW DATA ONLY
+                        }
+                    }
+                }
+            }
+        }
+
 def dump_json(dic:dict):
     return dumps(dic)
 

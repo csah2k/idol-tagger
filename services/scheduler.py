@@ -111,15 +111,15 @@ class Service:
             
             elif task['type'] == 'import_from_index': # enduser
                 self.doccano.import_from_index(task)
-                        
-            elif task['type'] == 'train_npl_models': # SYSTEM
-                self.spacynlp.run_training_task(task)
 
             elif task['type'] == 'export_from_doccano': # SYSTEM
                 self.doccano.export_from_doccano(task) 
                 
             elif task['type'] == 'sync_doccano_metadada':  # SYSTEM
                 self.doccano.sync_doccano_metadada()
+
+            elif task['type'] == 'train_npl_models': # SYSTEM
+                self.spacynlp.run_training_task(task)
 
         except Exception as error:
             self.logging.error(f"error running task '{task.get('name')}' : {str(error)}")

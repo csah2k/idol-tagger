@@ -1,6 +1,7 @@
 #from __future__ import unicode_literals, print_function
 import os
 #import re 
+import time
 import json
 import random
 import logging
@@ -59,12 +60,13 @@ class Service:
         return self.executor.submit(self._apply_project_model, username, proj_id, text, lang).result()
 
     def _apply_project_model(self, username:str, proj_id:str, text:str, lang=None):
-        self.logging.info(f"apply proj_{proj_id} model -> text: {text}")
+        
         # TODO check if user has any access to the project in mongo_role_mappings
         if lang == None:
             lang = self.index.detect_language(text)
-            self.logging.info(f"language detected: {lang}")
+            self.logging.debug(f"language detected: {lang}")
         model_name = f"{proj_id}/{lang}"
+        self.logging.info(f"Exec model '{model_name}': {text}")
 
         if model_name not in self.loaded_models.keys():
             err = f"model '{model_name}' not loaded"
@@ -79,9 +81,6 @@ class Service:
         return res
 
         
-
-
-
 
 
     ############## INDEX HIT ##############
@@ -103,8 +102,11 @@ class Service:
     #   <export_ts_field>: long,
     #   <train_ts_field>: long
     # }
-    
+
     def run_training_task(self, task:dict):
+        return self.executor.submit(self._run_training_task, task).result()
+
+    def _run_training_task(self, task:dict):
         # iterate all project id
         for proj in self.mongo_projects.find({}):
             # get project info
@@ -131,9 +133,82 @@ class Service:
             if proj_type == "SequenceLabeling":
                 self.train_ner_model(task, proj)
 
-    # TODO
     def train_ner_model(self, task, proj):
-        return self.generate_ner_data(proj)
+        n_iter=100
+        languages = self.cfg.get('languages',{})
+        self.logging.debug(f"languages: {languages}")
+        for lang, model in languages.items():
+            # data sample query selection
+            proj['index_query'] = util.createTrainDataQuery(proj, lang)
+            # load correct dataset from index
+            train_data = self.generate_ner_data(proj)
+            if len(train_data) == 0:
+                # only load the model if is data to train
+                self.logging.debug(f"No new training data found in index for language: {lang}")
+                continue
+
+            """Load the model, set up the pipeline and train the entity recognizer."""
+            # check if already exists the taget model file, if so then load it, and update this existing model
+            model_file, _, _ = util.getDataFilename(self.cfg, f"{proj['id']}/{lang}", None, None)
+            _nlp = None
+            if os.path.exists(model_file): 
+                self.logging.info(f"Loading project model '{model_file}'")
+                _nlp = spacy.load(model_file)
+            else:  # fallback to language core model
+                self.logging.info(f"Loading default lang model '{model}'")
+                _nlp = spacy.load(model)
+
+            # create the built-in pipeline components and add them to the pipeline
+            # nlp.create_pipe works for built-ins that are registered with spaCy
+            if "ner" not in _nlp.pipe_names:
+                ner = _nlp.create_pipe("ner")
+                _nlp.add_pipe(ner, last=True)
+            # otherwise, get it so we can add labels
+            else:
+                ner = _nlp.get_pipe("ner")
+
+            # add labels
+            for _, annotations in train_data:
+                for ent in annotations.get("entities"):
+                    ner.add_label(ent[2])
+
+            # get names of other pipes to disable them during training
+            pipe_exceptions = ["ner", "trf_wordpiecer", "trf_tok2vec"]
+            other_pipes = [pipe for pipe in _nlp.pipe_names if pipe not in pipe_exceptions]
+            with _nlp.disable_pipes(*other_pipes):  # only train NER
+                # reset and initialize the weights randomly – but only if we're
+                # training a new model
+                if model is None:
+                    _nlp.begin_training()
+                for _i in range(n_iter):
+                    random.shuffle(train_data)
+                    losses = {}
+                    # batch up the examples using spaCy's minibatch
+                    batches = minibatch(train_data, size=compounding(4.0, 32.0, 1.001))
+                    for batch in batches:
+                        texts, annotations = zip(*batch)
+                        _nlp.update(
+                            texts,  # batch of texts
+                            annotations,  # batch of annotations
+                            drop=0.5,  # dropout - make it harder to memorise data
+                            losses=losses,
+                        )
+                    self.logging.info(f"Losses {losses}")
+
+            # test the trained model
+            for text, _ in train_data:
+                doc = _nlp(text)
+                self.logging.info(f"Entities {[(ent.text, ent.label_) for ent in doc.ents]}")
+                self.logging.info(f"Tokens {[(t.text, t.ent_type_, t.ent_iob) for t in doc]}")
+
+            # save the model
+            _nlp.to_disk(model_file)
+            self.logging.info(f"Saved model to {model_file}")
+
+            # Load the saved model
+            self.loaded_models[f"{proj['id']}/{lang}"] = spacy.load(model_file)  
+            self.logging.debug(self.loaded_models)
+
 
     def train_classifier_model(self, task, proj):
         # TODO buscar essas variaveis dos parametros da task, project ou self.config
@@ -144,28 +219,7 @@ class Service:
         self.logging.debug(f"languages: {languages}")
         for lang, model in languages.items():
             # data sample query selection
-            index_query = {
-                "query": {
-                    "bool" : {
-                        "must" : {
-                            "range" : {
-                                proj['export_ts_field'] : {
-                                    "gte" : 10, ## HAVE TRAINING DATA
-                                }
-                            }
-                        },
-                        "filter": {
-                            "term" : { "language": lang } # LANGUAGE MODEL
-                        },
-                        "must_not": {
-                            "exists": {
-                                "field": proj['train_ts_field'] ## NEW DATA ONLY
-                            }
-                        }
-                    }
-                }
-            }
-            proj['index_query'] = index_query
+            proj['index_query'] = util.createTrainDataQuery(proj, lang)
             # load correct dataset from index
             (train_texts, train_cats), (dev_texts, dev_cats), categories = self.generate_classifier_data(proj)
             if len(categories) == 0 or len(train_texts) == 0:
@@ -234,52 +288,52 @@ class Service:
                         )
                     )
 
-            # test the trained model
-            test_text = "Numero de mortos pela pandemia do corona virus é o maior desde o inicio"
-            doc = _nlp(test_text)
-            best_cat = ('', 0)
-            for _cat in doc.cats:
-                if doc.cats[_cat] > best_cat[1]:
-                    best_cat = (_cat, doc.cats[_cat])
-            self.logging.info(f"{best_cat} : {test_text}")
-
             # save the model
             with _nlp.use_params(optimizer.averages):
                 _nlp.to_disk(model_file)
             self.logging.info(f"Saved model to {model_file}")
 
-            # test the saved model
-            self.logging.info(f"Loading from {model_file}")
-            nlp2 = spacy.load(model_file)            
-            doc2 = nlp2(test_text)
-            self.logging.info(f"{test_text} : {doc2.cats}")
-            self.loaded_models[f"{proj['id']}/{lang}"] = nlp2
-            self.logging.info(self.loaded_models)
+            # Load the saved model
+            self.loaded_models[f"{proj['id']}/{lang}"] = spacy.load(model_file)  
+            self.logging.debug(self.loaded_models)
             
 
 
     # TODO
-    def generate_ner_data(self, proj:dict):
-        #_export_field = proj['export_field']
-        #_index_query = proj['index_query']
-        #_indices = proj['indices']
-        return None
-
-    def generate_classifier_data(self, proj:dict, limit=100, split=0.8):
+    def generate_ner_data(self, proj:dict, minhits=10, limit=100, split=0.8):
+        # defaults: "LOC","MISC","ORG","PER"
         export_field = proj['export_field']
         index_query = proj['index_query']
         indices = proj['indices']      
         train_data = []
         # parse documents into expected 'spacy' format
         for hit in self.index.query(index_query, indices):
-            self.logging.info(f"hit: {hit}")
+            hit_data = hit.get(export_field,{})
+            self.logging.info(f"hit_data: {hit_data}")
+            # trasformar disso:  [{'end_offset': 147, 'label': 5, 'start_offset': 136, 'user': 1}, ... ]
+            #       nisto aqui:  [ ("E TEMPO DE APRENDER-MEU PRIMEIRO LIVRO (EDUCAÇÃO INFANTIL)", {"entities": [(0, 58, "LIVRO")]}), ... ]
+
+            train_data.append(hit_data) 
+        
+        #if len(train_data) >= minhits:
+
+        return train_data
+
+    def generate_classifier_data(self, proj:dict, minhits=10, limit=100, split=0.8):
+        export_field = proj['export_field']
+        index_query = proj['index_query']
+        indices = proj['indices']      
+        train_data = []
+        # parse documents into expected 'spacy' format
+        for hit in self.index.query(index_query, indices):
             hit_data = hit.get(export_field,{})
             labels = [proj['labels'][str(_l.get('label'))] for _l in hit_data]
-            train_data.append((hit['content'], labels)) 
-        if len(train_data) > 1:
+            train_data.append(( (hit['id'],hit['index']) , hit['content'], labels)) 
+        
+        if len(train_data) >= minhits:
             random.shuffle(train_data)
             train_data = train_data[-limit:]
-            texts, labels = zip(*train_data)
+            ids, texts, labels = zip(*train_data)
             # list categories (labels) from Doccano
             labels_template = {}
             for _l, text in proj['labels'].items():
@@ -293,6 +347,16 @@ class Service:
                 cats.append(cat)
             # Partition off part of the train data for evaluation
             split = int(len(train_data) * split)
+            
+            # mark train data used in the index
+            selected_ids = ids[:split]
+            #self.logging.info(f"selected_ids: {selected_ids}")
+            curr_time = int(time.time())
+            for _id, _index in selected_ids:
+                _res = self.index.update_fields(_index, _id, { proj['train_ts_field']: curr_time })
+                if (_res or {}).get('result',None) != 'updated':
+                    self.logging.error(f"Error updating index field '{proj['train_ts_field']}' to {curr_time} -> {_res}")
+
             return (texts[:split], cats[:split]), (texts[split:], cats[split:]), list(labels_template.keys())
         return ([], []), ([], []), []
 
@@ -302,81 +366,8 @@ class Service:
 
             
 
-    def train_model_ner(self, model=None, output_dir=None, n_iter=100):
-        TRAIN_DATA = [] # TODO
-
-        """Load the model, set up the pipeline and train the entity recognizer."""
-        if model is not None:
-            nlp = spacy.load(model)  # load existing spaCy model
-            logging.info("Loaded model '%s'" % model)
-        else:
-            nlp = spacy.blank("en")  # create blank Language class
-            logging.info("Created blank 'en' model")
-
-        # create the built-in pipeline components and add them to the pipeline
-        # nlp.create_pipe works for built-ins that are registered with spaCy
-        if "ner" not in nlp.pipe_names:
-            ner = nlp.create_pipe("ner")
-            nlp.add_pipe(ner, last=True)
-        # otherwise, get it so we can add labels
-        else:
-            ner = nlp.get_pipe("ner")
-
-        # add labels
-        for _, annotations in TRAIN_DATA:
-            for ent in annotations.get("entities"):
-                ner.add_label(ent[2])
-
-        # get names of other pipes to disable them during training
-        pipe_exceptions = ["ner", "trf_wordpiecer", "trf_tok2vec"]
-        other_pipes = [pipe for pipe in nlp.pipe_names if pipe not in pipe_exceptions]
-        with nlp.disable_pipes(*other_pipes):  # only train NER
-            # reset and initialize the weights randomly – but only if we're
-            # training a new model
-            if model is None:
-                nlp.begin_training()
-            for _i in range(n_iter):
-                random.shuffle(TRAIN_DATA)
-                losses = {}
-                # batch up the examples using spaCy's minibatch
-                batches = minibatch(TRAIN_DATA, size=compounding(4.0, 32.0, 1.001))
-                for batch in batches:
-                    texts, annotations = zip(*batch)
-                    nlp.update(
-                        texts,  # batch of texts
-                        annotations,  # batch of annotations
-                        drop=0.5,  # dropout - make it harder to memorise data
-                        losses=losses,
-                    )
-                logging.info(f"Losses {losses}")
-
-        # test the trained model
-        for text, _ in TRAIN_DATA:
-            doc = nlp(text)
-            logging.info(f"Entities {[(ent.text, ent.label_) for ent in doc.ents]}")
-            logging.info(f"Tokens {[(t.text, t.ent_type_, t.ent_iob) for t in doc]}")
-
-        # save model to output directory
-        if output_dir is not None:
-            output_dir = Path(output_dir)
-            if not output_dir.exists():
-                output_dir.mkdir()
-            nlp.to_disk(output_dir)
-            logging.info(f"Saved model to {output_dir}")
-
-            # test the saved model
-            logging.info(f"Loading from {output_dir}")
-            nlp2 = spacy.load(output_dir)
-            for text, _ in TRAIN_DATA:
-                doc = nlp2(text)
-                logging.info(f"Entities {[(ent.text, ent.label_) for ent in doc.ents]}")
-                logging.info(f"Tokens {[(t.text, t.ent_type_, t.ent_iob) for t in doc]}")
+    
         
-    def load_entity_data(self, limit=0, split=0.8):
-        # Partition off part of the train data for evaluation
-        train_data = []
-        #[ ("E TEMPO DE APRENDER-MEU PRIMEIRO LIVRO (EDUCAÇÃO INFANTIL)", {"entities": [(0, 58, "LIVRO")]}), ]
-        return train_data
 
     def evaluate(self, tokenizer, textcat, texts, cats):
         docs = (tokenizer(text) for text in texts)

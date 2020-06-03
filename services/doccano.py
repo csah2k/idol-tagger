@@ -64,6 +64,9 @@ class Service:
 
     ### INDEX -> DOCCANO
     def import_from_index(self, task:dict):
+        return self.executor.submit(self._import_from_index, task).result()
+
+    def _import_from_index(self, task:dict):
         # get project info
         proj_id = task['params']['projectid']
         indices = task['user']['indices']
@@ -127,11 +130,14 @@ class Service:
 
     ### DOCCANO -> INDEX
     def export_from_doccano(self, task:dict):
+        return self.executor.submit(self._export_from_doccano, task).result()
+
+    def _export_from_doccano(self, task:dict):
         # get project info
         proj_id = task['params']['projectid']
         export_ts_field = f"export_ts_prj_{proj_id}"
         export_field = f"export_prj_{proj_id}"
-        #date = datetime.datetime.now().isoformat()
+        export_count = 0
         resp = self.doccano_client.get_doc_download(int(proj_id), 'json')
         for line in resp.text.splitlines():
             doc = json.loads(line)            
@@ -153,10 +159,12 @@ class Service:
                     res = self.doccano_client.delete_document(int(proj_id), doc.get('id'))
                     if 200 <= res.status_code < 300:
                         self.logging.info(f"Doc exported [doccano: {doc.get('id')} -> index: {doc_indx}, id: {doc_id}]")
+                        export_count += 1
                     else:
                         self.logging.error(f"Erro deleting from Doccano, code: {res.status_code}, proj_id: {proj_id}, doc_id: {doc.get('id')}")
                 else:
                     self.logging.error(f"Error updating index field -> {_res}")
+        return export_count
 
 
     
